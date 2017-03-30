@@ -1,0 +1,10 @@
+# data file
+data/
+
+# log file
+save/
+logs/
+__pycache__/
+
+# Byte-compiled / optimized / DLL files 
+*.pyc
