@@ -10,7 +10,6 @@ import numpy as np
 import sys
 import os
 import logging
-import time
 
 EMBED_DIM = 128
 USE_CUDA = torch.cuda.is_available()
@@ -115,7 +114,6 @@ def prepare_input(d, q):
 
 def evaluate(model, data):
     acc = loss = n_examples = 0
-    start = time.time()
     for dw, dt, qw, qt, a, m_dw, m_qw, tt, \
             tm, c, m_c, cl, fnames in data:
         n_examples += dw.shape[0]

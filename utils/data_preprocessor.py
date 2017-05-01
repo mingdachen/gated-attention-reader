@@ -10,7 +10,12 @@ import glob
 import os
 import logging
 from tqdm import tqdm
-import time
+from multiprocessing.dummy import Pool
+from functools import partial
+try:
+    NUM_THREADS = int(os.environ['OMP_NUM_THREADS'])
+except KeyError:
+    NUM_THREADS = 4
 
 MAX_WORD_LEN = 10
 
@@ -79,24 +84,26 @@ class data_preprocessor:
                 os.path.join(question_dir, 'training', '*.question'))
 
             vocab_set = set()
-            n = 0.
-            for fname in fnames:
-                # print("processing: ", fname)
-                fp = open(fname, encoding='utf-8')
-                fp.readline()
-                fp.readline()
-                document = fp.readline().split()
-                fp.readline()
-                query = fp.readline().split()
-                fp.close()
 
-                vocab_set |= set(document) | set(query)
+            def process(fname, vocab_set):
+                with open(fname, encoding='utf-8') as fp:
+                    fp.readline()
+                    fp.readline()
+                    document = fp.readline().split()
+                    fp.readline()
+                    query = fp.readline().split()
 
-                # show progress
-                n += 1
-                if n % 10000 == 0:
-                    logging.info('%3d%%' % int(100 * n / len(fnames)))
+                    vocab_set |= set(document) | set(query)
+                return 0
 
+            with Pool(NUM_THREADS) as pool:
+                for _ in tqdm(
+                    pool.imap_unordered(
+                        partial(
+                            process,
+                            vocab_set=vocab_set),
+                        fnames), total=len(fnames)):
+                    pass
             entities = set(e for e in vocab_set if e.startswith('@entity'))
 
             # @placehoder, @begin and @end are included in the vocabulary list
@@ -107,9 +114,8 @@ class data_preprocessor:
             vocabularies = list(entities) + list(tokens)
 
             logging.info("writing vocabularies to " + vocab_file + " ...")
-            vocab_fp = open(vocab_file, "w", encoding='utf-8')
-            vocab_fp.write('\n'.join(vocabularies))
-            vocab_fp.close()
+            with open(vocab_file, "w", encoding='utf-8') as vocab_fp:
+                vocab_fp.write('\n'.join(vocabularies))
         # print(type(vocabularies))
         vocab_size = len(vocabularies)
         # word dictionary: word -> index
@@ -170,7 +176,8 @@ class data_preprocessor:
         ans = list(map(lambda w: w_dict.get(w, 0), ans_raw.split()))
         cand = [list(map(lambda w:w_dict.get(w, 0), c)) for c in cand_raw]
 
-        return doc_words, qry_words, ans, cand, doc_chars, qry_chars, cloze
+        return doc_words, qry_words, ans, cand, \
+            doc_chars, qry_chars, cloze, fname
 
     def parse_all_files(self, directory, dictionary, use_chars):
         """
@@ -179,11 +186,16 @@ class data_preprocessor:
         (document, query, answer, filename)
         """
         all_files = glob.glob(directory + '/*.question')
-        questions = []
-        for f in tqdm(all_files):
-            time.sleep(0.1)
-            question = self.parse_one_file(f, dictionary, use_chars)
-            questions.append(question + (f, ))
+        with Pool(NUM_THREADS) as pool:
+            questions = []
+            for question in tqdm(
+                pool.imap_unordered(
+                    partial(
+                        self.parse_one_file,
+                        dictionary=dictionary,
+                        use_chars=use_chars),
+                    all_files), total=len(all_files)):
+                questions.append(question)
         return questions
 
     def gen_text_for_word2vec(self, question_dir, text_file):
