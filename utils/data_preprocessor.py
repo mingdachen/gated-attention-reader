@@ -176,7 +176,7 @@ class data_preprocessor:
         where each element is in the form of
         (document, query, answer, filename)
         """
-        all_files = glob.glob(directory + '/*.question')
+        all_files = glob.glob(directory + '/*.question')[:100]
         questions = [self.parse_one_file(f, dictionary, use_chars) +
                      (f, ) for f in all_files]
         return questions

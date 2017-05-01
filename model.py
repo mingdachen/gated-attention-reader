@@ -5,20 +5,17 @@ from __future__ import division
 from __future__ import print_function
 from builtins import range
 
-import tensorflow as tf
-from tensorflow.contrib.rnn import GRUCell as GRU
-import time
-import os
-import logging
+import torch
+import torch.nn as nn
 from utils.misc import prepare_input
 from utils.model_helper import *
-from utils.data_preprocessor import MAX_WORD_LEN
 
 
-class GAReader:
-    def __init__(self, n_layers, vocab_size, n_chars,
-                 gru_size, embed_dim, train_emb, char_dim,
-                 use_feat, gating_fn, save_attn=False):
+class GAReader(nn.Module):
+    def __init__(self, n_layers, vocab_size, n_chars, dropout,
+                 gru_size, embed_init, embed_dim, train_emb, char_dim,
+                 use_feat, gating_fn):
+        super(GAReader, self).__init__()
         self.gru_size = gru_size
         self.n_layers = n_layers
         self.embed_dim = embed_dim
@@ -26,305 +23,111 @@ class GAReader:
         self.char_dim = char_dim
         self.n_chars = n_chars
         self.use_feat = use_feat
-        self.save_attn = save_attn
         self.gating_fn = gating_fn
         self.n_vocab = vocab_size
         self.use_chars = self.char_dim != 0
 
-    def build_graph(self, grad_clip, embed_init):
-        """
-        define model variables
-        """
-        # word input
-        self.doc = tf.placeholder(
-            tf.int32, [None, None, 1], name="doc")
-        self.qry = tf.placeholder(
-            tf.int32, [None, None, 1], name="query")
-        self.cand = tf.placeholder(
-            tf.int32, [None, None, None], name="cand_ans")
-        self.target = tf.placeholder(
-            tf.int32, [None, ], name="answer")
-        self.cloze = tf.placeholder(
-            tf.int32, [None, ], name="cloze")
-        # word mask
-        self.doc_mask = tf.placeholder(
-            tf.int32, [None, None], name="doc_mask")
-        self.qry_mask = tf.placeholder(
-            tf.int32, [None, None], name="query_mask")
-        self.cand_mask = tf.placeholder(
-            tf.int32, [None, None], name="cand_mask")
-        # char input
-        self.doc_char = tf.placeholder(
-            tf.int32, [None, None], name="doc_char")
-        self.qry_char = tf.placeholder(
-            tf.int32, [None, None], name="qry_char")
-        self.token = tf.placeholder(
-            tf.int32, [None, MAX_WORD_LEN], name="token")
-        # char mask
-        self.char_mask = tf.placeholder(
-            tf.int32, [None, MAX_WORD_LEN], name="char_mask")
-        # extra features
-        self.feat = tf.placeholder(
-            tf.int32, [None, None], name="features")
-
-        # model parameters
-        self.global_step = tf.Variable(0, trainable=False)
-        self.n_epoch = tf.Variable(0, trainable=False)
-        self.epoch_update = tf.assign_add(self.n_epoch, 1)
-        self.lr = tf.placeholder(tf.float32, name="learning_rate")
-        self.keep_prob = tf.placeholder(tf.float32, name="keep_prob")
-
-        # word embedding
-        if embed_init is None:
-            word_embedding = tf.get_variable(
-                "word_embedding", [self.n_vocab, self.embed_dim],
-                initializer=tf.random_normal_initializer(stddev=0.1),
-                trainable=self.train_emb)
-        else:
-            word_embedding = tf.Variable(embed_init, trainable=self.train_emb,
-                                         name="word_embedding")
-        doc_embed = tf.squeeze(
-            tf.nn.embedding_lookup(word_embedding, self.doc), axis=2)
-        qry_embed = tf.squeeze(
-            tf.nn.embedding_lookup(word_embedding, self.qry), axis=2)
-
-        # feature embedding
-        feature_embedding = tf.get_variable(
-            "feature_embedding", [2, 2],
-            initializer=tf.random_normal_initializer(stddev=0.1),
-            trainable=self.train_emb)
-        feat_embed = tf.nn.embedding_lookup(feature_embedding, self.feat)
-
-        # char embedding
+        self.dropout = nn.Dropout(dropout)
+        self.embed = nn.Embedding(vocab_size, embed_dim)
+        if use_feat:
+            self.feat_embed = nn.Embedding(2, 2)
         if self.use_chars:
-            char_embedding = tf.get_variable(
-                "char_embedding", [self.n_chars, self.char_dim],
-                initializer=tf.random_normal_initializer(stddev=0.1))
-            token_embed = tf.nn.embedding_lookup(char_embedding, self.token)
-            fw_gru = GRU(self.char_dim)
-            bk_gru = GRU(self.char_dim)
-            # fw_states/bk_states: [batch_size, gru_size]
-            # only use final state
-            seq_length = tf.reduce_sum(self.char_mask, axis=1)
-            _, (fw_final_state, bk_final_state) = \
-                tf.nn.bidirectional_dynamic_rnn(
-                fw_gru, bk_gru, token_embed, sequence_length=seq_length,
-                dtype=tf.float32, scope="char_rnn")
-            fw_embed = tf.layers.dense(
-                fw_final_state, self.embed_dim // 2)
-            bk_embed = tf.layers.dense(
-                bk_final_state, self.embed_dim // 2)
-            merge_embed = fw_embed + bk_embed
-            doc_char_embed = tf.nn.embedding_lookup(merge_embed, self.doc_char)
-            qry_char_embed = tf.nn.embedding_lookup(merge_embed, self.qry_char)
-
-            doc_embed = tf.concat([doc_embed, doc_char_embed], axis=2)
-            qry_embed = tf.concat([qry_embed, qry_char_embed], axis=2)
-
-        self.attentions = []
-        if self.save_attn:
-            inter = pairwise_interaction(doc_embed, qry_embed)
-            self.attentions.append(inter)
-
-        for i in range(self.n_layers):
-            fw_doc = GRU(self.gru_size)
-            bk_doc = GRU(self.gru_size)
-            seq_length = tf.reduce_sum(self.doc_mask, axis=1)
-            (fw_doc_states, bk_doc_states), _ = \
-                tf.nn.bidirectional_dynamic_rnn(
-                fw_doc, bk_doc, doc_embed, sequence_length=seq_length,
-                dtype=tf.float32, scope="{}_layer_doc_rnn".format(i))
-            doc_bi_embed = tf.concat([fw_doc_states, bk_doc_states], axis=2)
-
-            fw_qry = GRU(self.gru_size)
-            bk_qry = GRU(self.gru_size)
-            seq_length = tf.reduce_sum(self.qry_mask, axis=1)
-            (fw_qry_states, bk_qry_states), _ = \
-                tf.nn.bidirectional_dynamic_rnn(
-                fw_qry, bk_qry, qry_embed, sequence_length=seq_length,
-                dtype=tf.float32, scope="{}_layer_qry_rnn".format(i))
-            qry_bi_embed = tf.concat([fw_qry_states, bk_qry_states], axis=2)
-
-            interacted_embed = pairwise_interaction(
-                doc_bi_embed, qry_bi_embed)
-            doc_inter_embed = gated_attention(
-                doc_bi_embed, qry_bi_embed, interacted_embed, self.qry_mask,
-                gating_fn=self.gating_fn)
-            tf.nn.dropout(doc_inter_embed, self.keep_prob)
-            if self.save_attn:
-                self.attentions.append(interacted_embed)
-
-        if self.use_feat:
-            doc_embed = tf.concat([doc_embed, feat_embed], axis=2)
+            self.char_embed = nn.Embedding(self.n_chars, self.char_dim)
+            # (seq_len, batch, hidden_size * num_directions)
+            self.char_gru = nn.GRU(input_size=self.char_dim,
+                                   hidden_size=self.char_dim,
+                                   dropout=dropout,
+                                   batch_first=True,
+                                   bidirectional=True)
+            # (batch, seq_len, embed_dim)
+            self.char_fw = nn.Linear(
+                self.char_dim, self.embed_dim // 2)
+            self.char_bk = nn.Linear(
+                self.char_dim, self.embed_dim // 2)
+        if embed_init is not None:
+            self.embed.weight.data.copy_(torch.from_numpy(embed_init))
+        if not train_emb:
+            self.embed.weight.requires_grad = False
+        self.main_layers = []
+        if self.use_chars:
+            main_input_feat = embed_dim + self.embed_dim // 2
+        else:
+            main_input_feat = embed_dim
+        for layer in range(n_layers - 1):
+            layer_doc = nn.GRU(
+                input_size=main_input_feat if layer == 0 else 2 * self.gru_size,
+                hidden_size=self.gru_size,
+                batch_first=True,
+                bidirectional=True)
+            layer_qry = nn.GRU(
+                input_size=main_input_feat,
+                hidden_size=self.gru_size,
+                batch_first=True,
+                bidirectional=True)
+            self.main_layers.append([layer_doc, layer_qry])
+        if use_feat:
+            final_input_feat = self.gru_size * 2 + 2
+        else:
+            final_input_feat = self.gru_size * 2
         # final layer
-        fw_doc_final = GRU(self.gru_size)
-        bk_doc_final = GRU(self.gru_size)
-        seq_length = tf.reduce_sum(self.doc_mask, axis=1)
-        (fw_doc_states, bk_doc_states), _ = tf.nn.bidirectional_dynamic_rnn(
-            fw_doc_final, bk_doc_final, doc_embed, sequence_length=seq_length,
-            dtype=tf.float32, scope="final_doc_rnn")
-        doc_embed_final = tf.concat([fw_doc_states, bk_doc_states], axis=2)
+        self.final_doc_layer = nn.GRU(
+            input_size=final_input_feat,
+            hidden_size=self.gru_size,
+            batch_first=True,
+            bidirectional=True)
+        self.final_qry_layer = nn.GRU(
+            input_size=main_input_feat,
+            hidden_size=self.gru_size,
+            batch_first=True,
+            bidirectional=True)
+        self.criterion = nn.CrossEntropyLoss()
 
-        fw_qry_final = GRU(self.gru_size)
-        bk_doc_final = GRU(self.gru_size)
-        seq_length = tf.reduce_sum(self.qry_mask, axis=1)
-        (fw_qry_states, bk_qry_states), _ = tf.nn.bidirectional_dynamic_rnn(
-            fw_qry_final, bk_doc_final, qry_embed, sequence_length=seq_length,
-            dtype=tf.float32, scope="final_qry_rnn")
-        qry_embed_final = tf.concat([fw_qry_states, bk_qry_states], axis=2)
-
-        if self.save_attn:
-            inter = pairwise_interaction(doc_embed_final, qry_embed_final)
-            self.attentions.append(inter)
-
-        self.pred = attention_sum(
-            doc_embed_final, qry_embed_final, self.cand,
-            self.cloze, self.cand_mask)
-        self.loss = tf.reduce_mean(
-            tf.nn.sparse_softmax_cross_entropy_with_logits(
-                labels=self.target, logits=self.pred, name="cross_entropy"))
-        self.pred_ans = tf.cast(tf.argmax(self.pred, axis=1), tf.int32)
-        self.test = tf.cast(tf.equal(self.target, self.pred_ans), tf.float32)
-        self.accuracy = tf.reduce_mean(
-            tf.cast(tf.equal(self.target, self.pred_ans), tf.float32))
-        vars_list = tf.trainable_variables()
-        optimizer = tf.train.AdamOptimizer(self.lr)
-        # gradient clipping
-        grads, _ = tf.clip_by_global_norm(
-            tf.gradients(self.loss, vars_list), grad_clip)
-        # for grad, var in zip(grads, vars_list):
-        #     tf.summary.histogram(var.name + '/gradient', grad)
-        self.updates = optimizer.apply_gradients(
-            zip(grads, vars_list), global_step=self.global_step)
-        self.save_vars()
-
-    def save_vars(self):
-        """
-        for restoring model
-        """
-        tf.add_to_collection('doc', self.doc)
-        tf.add_to_collection('qry', self.qry)
-        tf.add_to_collection('doc_char', self.doc_char)
-        tf.add_to_collection('qry_char', self.qry_char)
-        tf.add_to_collection('target', self.target)
-        tf.add_to_collection('doc_mask', self.doc_mask)
-        tf.add_to_collection('qry_mask', self.qry_mask)
-        tf.add_to_collection('token', self.token)
-        tf.add_to_collection('char_mask', self.char_mask)
-        tf.add_to_collection('cand', self.cand)
-        tf.add_to_collection('cand_mask', self.cand_mask)
-        tf.add_to_collection('cloze', self.cloze)
-        tf.add_to_collection('feat', self.feat)
-        tf.add_to_collection('keep_prob', self.keep_prob)
-        tf.add_to_collection('loss', self.loss)
-        tf.add_to_collection('accuracy', self.accuracy)
-        tf.add_to_collection('updates', self.updates)
-        tf.add_to_collection('global_step', self.global_step)
-        tf.add_to_collection('n_epoch', self.n_epoch)
-        tf.add_to_collection('epoch_update', self.epoch_update)
-        tf.add_to_collection('learning_rate', self.lr)
-
-    def train(self, sess, dropout, learning_rate, print_every, save_every,
-              checkpoint_dir, data, saver):
-        """
-        train model
-        Args:
-        - data: (object) containing training data
-        """
-        start = time.time()
-        loss = acc = 0
-        current_epoch = sess.run(self.n_epoch)
-        for dw, dt, qw, qt, a, m_dw, m_qw, tt, \
-                tm, c, m_c, cl, fnames in data:
-            feat = prepare_input(dw, qw)
-            feed_dict = {self.doc: dw, self.qry: qw,
-                         self.doc_char: dt,
-                         self.qry_char: qt, self.target: a,
-                         self.doc_mask: m_dw, self.qry_mask: m_qw,
-                         self.token: tt, self.char_mask: tm,
-                         self.cand: c, self.cand_mask: m_c,
-                         self.cloze: cl, self.feat: feat,
-                         self.keep_prob: 1 - dropout,
-                         self.lr: learning_rate}
-            loss_, acc_, _, it = \
-                sess.run([self.loss, self.accuracy, self.updates,
-                         self.global_step], feed_dict)
-            loss += loss_
-            acc += acc_
-            if it % print_every == 0:
-                spend = (time.time() - start) / 60
-                statement = "epoch: {}, it: {} (max: {}), time: {:.3f}, "\
-                    .format(current_epoch, it, data.n_batches, spend)
-                statement += "loss: {:.3f}, acc: {:.3f}"\
-                    .format(loss / print_every, acc / print_every)
-                logging.info(statement)
-                loss = acc = 0
-                start = time.time()
-        current_epoch = sess.run(self.epoch_update)
-        # save model
-        if current_epoch % save_every == 0:
-            checkpoint_path = os.path.join(checkpoint_dir, 'model.ckpt')
-            saver.save(sess, checkpoint_path)
-            logging.info("model saved to {}".format(checkpoint_path))
-
-    def validate(self, sess, data):
-        """
-        test the model
-        """
-        loss = acc = n_batch = 0
-        for dw, dt, qw, qt, a, m_dw, m_qw, tt, \
-                tm, c, m_c, cl, fnames in data:
-            start = time.time()
-            feat = prepare_input(dw, qw)
-            feed_dict = {self.doc: dw, self.qry: qw,
-                         self.doc_char: dt,
-                         self.qry_char: qt, self.target: a,
-                         self.doc_mask: m_dw, self.qry_mask: m_qw,
-                         self.token: tt, self.char_mask: tm,
-                         self.cand: c, self.cand_mask: m_c,
-                         self.cloze: cl, self.feat: feat,
-                         self.keep_prob: 1.0,
-                         self.lr: 0.}
-            _loss, _acc = sess.run([self.loss, self.accuracy], feed_dict)
-            n_batch += 1
-            loss += _loss
-            acc += _acc
-        loss /= n_batch
-        acc /= n_batch
-        spend = (time.time() - start) / 60
-        statement = "testing stats: time: {:.3f}, loss: {:.3f}, "\
-            .format(spend, loss)
-        statement += "acc: {:.3f}, time/batch:{:.3f}"\
-            .format(acc, spend / n_batch)
-        logging.info(statement)
-
-    def restore(self, sess, checkpoint_dir):
-        """
-        restore model
-        """
-        checkpoint_path = os.path.join(checkpoint_dir, 'model.ckpt')
-        loader = tf.train.import_meta_graph(checkpoint_path + '.meta')
-        loader.restore(sess, checkpoint_path)
-        logging.info("model restored from {}".format(checkpoint_path))
-        # restore variables from checkpoint
-        self.doc = tf.get_collection('doc')[0]
-        self.qry = tf.get_collection('qry')[0]
-        self.doc_char = tf.get_collection('doc_char')[0]
-        self.qry_char = tf.get_collection('qry_char')[0]
-        self.target = tf.get_collection('target')[0]
-        self.doc_mask = tf.get_collection('doc_mask')[0]
-        self.qry_mask = tf.get_collection('qry_mask')[0]
-        self.token = tf.get_collection('token')[0]
-        self.char_mask = tf.get_collection('char_mask')[0]
-        self.cand = tf.get_collection('cand')[0]
-        self.cand_mask = tf.get_collection('cand_mask')[0]
-        self.cloze = tf.get_collection('cloze')[0]
-        self.feat = tf.get_collection('feat')[0]
-        self.keep_prob = tf.get_collection('keep_prob')[0]
-        self.loss = tf.get_collection('loss')[0]
-        self.accuracy = tf.get_collection('accuracy')[0]
-        self.updates = tf.get_collection('updates')[0]
-        self.global_step = tf.get_collection('global_step')[0]
-        self.epoch_update = tf.get_collection('epoch_update')[0]
-        self.n_epoch = tf.get_collection('n_epoch')[0]
-        self.lr = tf.get_collection('learning_rate')[0]
+    def forward(self, doc, doc_char, qry, qry_char, target,
+                doc_mask, qry_mask, token, char_mask, cand,
+                cand_mask, cloze, fnames):
+        doc_embed = self.embed(doc.long())
+        qry_embed = self.embed(qry.long())
+        if self.use_chars:
+            token_embed = self.char_embed(token.long())
+            token_out, _ = self.char_gru(token_embed)
+            token_fw_out = token_out[:, -1, :self.char_dim]
+            token_bk_out = token_out[:, -1, self.char_dim:]
+            token_fw_out = self.char_fw(
+                token_fw_out.contiguous().view([-1, self.char_dim]))
+            token_fw_out = token_fw_out.view(
+                [token_out.size()[0]] + [token_fw_out.size()[-1]])
+            token_bk_out = self.char_bk(
+                token_bk_out.contiguous().view([-1, self.char_dim]))
+            token_bk_out = token_fw_out.view(
+                [token_out.size()[0]] + [token_bk_out.size()[-1]])
+            merge_token_out = token_fw_out + token_bk_out
+            doc_char_embed = merge_token_out.index_select(
+                0, doc_char.long().view([-1])).view(
+                list(doc_char.size()) + [self.embed_dim // 2])
+            qry_char_embed = merge_token_out.index_select(
+                0, qry_char.long().view([-1])).view(
+                list(qry_char.size()) + [self.embed_dim // 2])
+            doc_embed = torch.cat([doc_embed, doc_char_embed], dim=-1)
+            qry_embed = torch.cat([qry_embed, qry_char_embed], dim=-1)
+        for layer in range(self.n_layers - 1):
+            doc_bi_embed, _ = \
+                self.main_layers[layer][0](doc_embed)
+            qry_bi_embed, _ = \
+                self.main_layers[layer][1](qry_embed)
+            interacted = pairwise_interaction(doc_bi_embed, qry_bi_embed)
+            doc_inter_embed = gated_attention(
+                doc_bi_embed, qry_bi_embed, interacted, qry_mask,
+                gating_fn=self.gating_fn)
+            doc_embed = self.dropout(doc_inter_embed)
+        if self.use_feat:
+            feat = prepare_input(doc, qry)
+            feat_embed = self.feat_embed(feat)
+            doc_embed = torch.cat([doc_embed, feat_embed], dim=-1)
+        doc_final_embed, _ = self.final_doc_layer(doc_embed)
+        qry_final_embed, _ = self.final_qry_layer(qry_embed)
+        pred = attention_sum(
+            doc_final_embed, qry_final_embed, cand, cloze, cand_mask)
+        loss = self.criterion(pred, target.long())
+        prob, pred_ans = torch.max(pred, dim=1)
+        acc = torch.sum(torch.eq(pred_ans, target.long()))
+        return loss, acc

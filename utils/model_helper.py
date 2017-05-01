@@ -4,51 +4,52 @@
 from __future__ import division
 from __future__ import print_function
 
-import tensorflow as tf
+import torch
+import torch.nn.functional as F
 
 
-def tfconcat(t1, t2):
-    return tf.concat([t1, t2], axis=2)
+def torchconcat(t1, t2):
+    return torch.concat([t1, t2], axis=2)
 
 
-def tfsum(t1, t2):
+def torchsum(t1, t2):
     return t1 + t2
 
 
-def gated_attention(doc, qry, inter, mask, gating_fn='tf.multiply'):
+def gated_attention(doc, qry, inter, mask, gating_fn='torch.mul'):
     # doc: B x N x D
     # qry: B x Q x D
     # inter: B x N x Q
     # mask (qry): B x Q
-    alphas_r = tf.nn.softmax(inter) * \
-        tf.cast(tf.expand_dims(mask, axis=1), tf.float32)
+    alphas_r = F.softmax(inter) * mask[:, None, :].float().expand_as(inter)
     alphas_r = alphas_r / \
-        tf.expand_dims(tf.reduce_sum(alphas_r, axis=2), axis=-1)  # B x N x Q
-    q_rep = tf.matmul(alphas_r, qry)  # B x N x D
+        torch.sum(alphas_r, dim=2).expand_as(alphas_r)  # B x N x Q
+    q_rep = torch.bmm(alphas_r, qry)  # B x N x D
     return eval(gating_fn)(doc, q_rep)
 
 
 def pairwise_interaction(doc, qry):
     # doc: B x N x D
     # qry: B x Q x D
-    shuffled = tf.transpose(qry, perm=[0, 2, 1])  # B x D x Q
-    return tf.matmul(doc, shuffled)  # B x N x Q
+    shuffled = qry.permute(0, 2, 1)  # B x D x Q
+    return torch.bmm(doc, shuffled)  # B x N x Q
 
 
-def attention_sum(doc, qry, cand, cloze, cand_mask=None):
+def attention_sum(doc, qry, cand, cloze, cand_mask):
     # doc: B x N x D
     # qry: B x Q x D
     # cand: B x N x C
     # cloze: B x 1
     # cand_mask: B x N
-    idx = tf.concat(
-        [tf.expand_dims(tf.range(tf.shape(qry)[0]), axis=1),
-         tf.expand_dims(cloze, axis=1)], axis=1)
-    q = tf.gather_nd(qry, idx)  # B x D
-    p = tf.squeeze(
-        tf.matmul(doc, tf.expand_dims(q, axis=-1)), axis=-1)  # B x N
-    pm = tf.nn.softmax(p) * tf.cast(cand_mask, tf.float32)  # B x N
-    pm = pm / tf.expand_dims(tf.reduce_sum(pm, axis=1), axis=-1)  # B x N
-    pm = tf.expand_dims(pm, axis=1)  # B x 1 x N
-    return tf.squeeze(
-        tf.matmul(pm, tf.cast(cand, tf.float32)), axis=1)  # B x C
+    # TODO: advanced indexing
+    for i in range(qry.size(0)):
+        cloze[i] = cloze[i] + qry.size(0) * i
+    q = torch.index_select(
+        qry.contiguous().view([-1, qry.size(-1)]), 0, cloze.long())  # B x D
+    p = torch.squeeze(
+        torch.bmm(doc, q.unsqueeze(dim=-1)), dim=-1)  # B x N
+    pm = F.softmax(p) * cand_mask.float()  # B x N
+    pm = pm / torch.sum(pm, dim=1).expand_as(pm)  # B x N
+    pm = pm.unsqueeze(1)  # B x 1 x N
+    return torch.squeeze(
+        torch.bmm(pm, cand.float()), dim=1)  # B x C
