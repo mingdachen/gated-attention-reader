@@ -75,7 +75,7 @@ def train(args):
     # load data
     dp = data_preprocessor()
     data = dp.preprocess(
-        args.data_dir, no_training_set=True, use_chars=use_chars)
+        args.data_dir, no_training_set=False, use_chars=use_chars)
 
     # build minibatch loader
     train_batch_loader = minibatch_loader(
@@ -105,8 +105,12 @@ def train(args):
         acc = loss = n_examples = it = 0
         start = time.time()
         for dw, dt, qw, qt, a, m_dw, m_qw, tt, \
-                tm, c, m_c, cl, fnames in test_batch_loader:
+                tm, c, m_c, cl, fnames in train_batch_loader:
             n_examples += dw.shape[0]
+            tt_len = tm.sum(-1)
+            sort_idx = np.argsort(-tt_len)
+            tt = tt[sort_idx]
+            tm = tm[sort_idx]
             dw, dt, qw, qt, a, m_dw, m_qw, tt, \
                 tm, c, m_c, cl = to_vars([dw, dt, qw, qt, a, m_dw, m_qw, tt,
                                          tm, c, m_c, cl])
@@ -122,10 +126,11 @@ def train(args):
             if it % args.print_every == 0:
                 spend = (time.time() - start) / 60
                 statement = "epoch: {}, it: {} (max: {}), time: {:.3f}(m), "\
-                    .format(epoch, it, test_batch_loader.n_batches, spend)
+                    .format(epoch, it, train_batch_loader.n_batches, spend)
                 statement += "loss: {:.3f}, acc: {:.3f}"\
-                    .format(loss / n_examples, acc / n_examples)
+                    .format(loss / args.print_every, acc / n_examples)
                 logging.info(statement)
+                acc = loss = n_examples = 0
                 start = time.time()
 
     # test model
