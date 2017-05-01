@@ -6,6 +6,7 @@ from __future__ import print_function
 
 import argparse
 import torch
+import numpy as np
 import time
 import os
 import logging
@@ -77,10 +78,10 @@ def train(args):
         args.data_dir, no_training_set=True, use_chars=use_chars)
 
     # build minibatch loader
-    # train_batch_loader = minibatch_loader(
-    #     data.training, args.batch_size, sample=1.0)
-    # valid_batch_loader = minibatch_loader(
-    #     data.validation, args.batch_size)
+    train_batch_loader = minibatch_loader(
+        data.training, args.batch_size, sample=1.0)
+    valid_batch_loader = minibatch_loader(
+        data.validation, args.batch_size)
     test_batch_loader = minibatch_loader(
         data.test, args.batch_size)
 
@@ -111,8 +112,8 @@ def train(args):
                                          tm, c, m_c, cl])
             loss_, acc_ = model(dw, dt, qw, qt, a, m_dw, m_qw, tt,
                                 tm, c, m_c, cl, fnames)
-            loss += loss_.data
-            acc += acc_.data
+            loss += loss_.data.numpy()[0]
+            acc += acc_.data.numpy()[0]
             it += 1
             opt.zero_grad()
             loss_.backward()
@@ -120,10 +121,12 @@ def train(args):
             opt.step()
             if it % args.print_every == 0:
                 spend = (time.time() - start) / 60
-                statement = "epoch: {}, it: {} (max: {}), time: {:.3f}, "\
+                statement = "epoch: {}, it: {} (max: {}), time: {:.3f}(m), "\
                     .format(epoch, it, test_batch_loader.n_batches, spend)
                 statement += "loss: {:.3f}, acc: {:.3f}"\
                     .format(loss / n_examples, acc / n_examples)
+                logging.info(statement)
+                start = time.time()
 
     # test model
     logging.info("Final test ...")
@@ -132,6 +135,7 @@ def train(args):
 if __name__ == "__main__":
     args = get_args()
     torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
     # check the existence of directories
     args.data_dir = os.path.join(os.getcwd(), args.data_dir)
     check_dir(args.data_dir, exit_function=True)
