@@ -1,5 +1,5 @@
 # GA-Reader
-Tensorflow implementation of [Gated Attention Reader for Text Comprehension](https://arxiv.org/abs/1606.01549). The original code can be found [here](https://github.com/bdhingra/ga-reader)
+Tensorflow implementation of [Gated Attention Reader for Text Comprehension](https://arxiv.org/abs/1606.01549). The original code can be found [here](https://github.com/bdhingra/ga-reader). You may check the PyTorch implementation in the pytorch branch.
 
 ## Prerequisites
 - Python 3.5
