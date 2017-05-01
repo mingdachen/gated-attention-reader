@@ -10,6 +10,8 @@ import numpy as np
 import sys
 import os
 import logging
+import time
+
 EMBED_DIM = 128
 USE_CUDA = torch.cuda.is_available()
 dtype = torch.cuda.FloatTensor \
@@ -109,3 +111,23 @@ def prepare_input(d, q):
     for i in range(d.shape[0]):
         f[i, :] = np.in1d(d[i, :, 0], q[i, :, 0])
     return f
+
+
+def evaluate(model, data):
+    acc = loss = n_examples = 0
+    start = time.time()
+    for dw, dt, qw, qt, a, m_dw, m_qw, tt, \
+            tm, c, m_c, cl, fnames in data:
+        n_examples += dw.shape[0]
+        tt_len = tm.sum(-1)
+        sort_idx = np.argsort(-tt_len)
+        tt = tt[sort_idx]
+        tm = tm[sort_idx]
+        dw, dt, qw, qt, a, m_dw, m_qw, tt, \
+            tm, c, m_c, cl = to_vars([dw, dt, qw, qt, a, m_dw, m_qw, tt,
+                                     tm, c, m_c, cl])
+        loss_, acc_ = model(dw, dt, qw, qt, a, m_dw, m_qw, tt,
+                            tm, c, m_c, cl, fnames)
+        loss += loss_.data.numpy()[0]
+        acc += acc_.data.numpy()[0]
+    return loss / len(data), acc / n_examples

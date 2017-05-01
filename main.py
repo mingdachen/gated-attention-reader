@@ -12,7 +12,7 @@ import os
 import logging
 from utils.data_preprocessor import data_preprocessor
 from utils.minibatch_loader import minibatch_loader
-from utils.misc import to_vars, check_dir, load_word2vec_embeddings
+from utils.misc import to_vars, evaluate, check_dir, load_word2vec_embeddings
 from model import GAReader
 
 
@@ -54,6 +54,8 @@ def get_args():
                         help='save frequency')
     parser.add_argument('--print_every', type=int, default=50,
                         help='print frequency')
+    parser.add_argument('--eval_every', type=int, default=10000,
+                        help='evaluate frequency')
     parser.add_argument('--grad_clip', type=float, default=10,
                         help='clip gradients at this value')
     parser.add_argument('--init_learning_rate', type=float, default=5e-4,
@@ -126,15 +128,24 @@ def train(args):
             if it % args.print_every == 0:
                 spend = (time.time() - start) / 60
                 statement = "epoch: {}, it: {} (max: {}), time: {:.3f}(m), "\
-                    .format(epoch, it, train_batch_loader.n_batches, spend)
+                    .format(epoch, it, len(train_batch_loader), spend)
                 statement += "loss: {:.3f}, acc: {:.3f}"\
                     .format(loss / args.print_every, acc / n_examples)
                 logging.info(statement)
                 acc = loss = n_examples = 0
                 start = time.time()
-
-    # test model
-    logging.info("Final test ...")
+            if it % args.eval_every == 0:
+                start = time.time()
+                test_loss, test_acc = evaluate(model, valid_batch_loader)
+                spend = (time.time() - start) / 60
+                logging.info("Valid loss: {:.3f}, acc: {.3f}, time: {.3f}(m)"
+                             .format(test_loss, test_acc, spend))
+                start = time.time()
+        start = time.time()
+        test_loss, test_acc = evaluate(model, test_batch_loader)
+        spend = (time.time() - start) / 60
+        logging.info("Test loss: {:.3f}, acc: {.3f}, time: {.3f}(m)"
+                     .format(test_loss, test_acc, spend))
 
 
 if __name__ == "__main__":

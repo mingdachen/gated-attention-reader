@@ -95,7 +95,7 @@ class data_preprocessor:
                 # show progress
                 n += 1
                 if n % 10000 == 0:
-                    print('%3d%%' % int(100 * n / len(fnames)))
+                    logging.info('%3d%%' % int(100 * n / len(fnames)))
 
             entities = set(e for e in vocab_set if e.startswith('@entity'))
 

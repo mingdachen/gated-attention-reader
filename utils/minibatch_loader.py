@@ -25,7 +25,9 @@ class minibatch_loader:
         self.max_word_len = MAX_WORD_LEN
         self.shuffle = shuffle
         self.reset()
-        self.n_batches = len(self.batch_pool)
+
+    def __len__(self):
+        return len(self.batch_pool)
 
     def __iter__(self):
         """make the object iterable"""
