@@ -9,6 +9,8 @@ from builtins import range
 import glob
 import os
 import logging
+from tqdm import tqdm
+import time
 
 MAX_WORD_LEN = 10
 
@@ -177,8 +179,11 @@ class data_preprocessor:
         (document, query, answer, filename)
         """
         all_files = glob.glob(directory + '/*.question')
-        questions = [self.parse_one_file(f, dictionary, use_chars) +
-                     (f, ) for f in all_files]
+        questions = []
+        for f in tqdm(all_files):
+            time.sleep(0.1)
+            question = self.parse_one_file(f, dictionary, use_chars)
+            questions.append(question + (f, ))
         return questions
 
     def gen_text_for_word2vec(self, question_dir, text_file):
