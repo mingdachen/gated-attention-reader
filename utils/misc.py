@@ -6,30 +6,26 @@ from __future__ import print_function
 
 import torch
 import torch.nn as nn
+from torch.autograd import Variable
 import numpy as np
 import sys
 import os
 import logging
 
 EMBED_DIM = 128
-USE_CUDA = torch.cuda.is_available()
 dtype = torch.cuda.FloatTensor \
     if torch.cuda.is_available() else torch.FloatTensor
 
 
-class Variable(torch.autograd.Variable):
-    def __init__(self, data, *args, **kwargs):
-        if USE_CUDA:
-            data = data.cuda()
-        super(Variable, self).__init__(data, *args, **kwargs)
+def to_var(inputs, use_cuda):
+    if use_cuda:
+        return Variable(torch.from_numpy(inputs).cuda())
+    else:
+        return Variable(torch.from_numpy(inputs))
 
 
-def to_var(inputs):
-    return Variable(torch.from_numpy(inputs))
-
-
-def to_vars(inputs):
-    return [to_var(inputs_) for inputs_ in inputs]
+def to_vars(inputs, use_cuda):
+    return [to_var(inputs_, use_cuda) for inputs_ in inputs]
 
 
 def show_predicted_vs_ground_truth(probs, a, inv_dict):

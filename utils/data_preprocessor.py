@@ -186,7 +186,7 @@ class data_preprocessor:
         where each element is in the form of
         (document, query, answer, filename)
         """
-        all_files = glob.glob(directory + '/*.question')[: 100]
+        all_files = glob.glob(directory + '/*.question')
         manager = Manager()
         w_dict, c_dict = dictionary[0], dictionary[1]
         w_dict_m = manager.dict(w_dict)

@@ -68,7 +68,7 @@ def gru(inputs, mask, cell):
         .view(-1, 1, 1).expand_as(inputs)
     sorted_inputs = inputs.gather(0, index_sorted_idx.long())
     packed_seq = torch.nn.utils.rnn.pack_padded_sequence(
-        sorted_inputs, sorted_len.data.numpy(), batch_first=True)
+        sorted_inputs, sorted_len.cpu().data.numpy(), batch_first=True)
     out, _ = cell(packed_seq)
     unpacked, unpacked_len = \
         torch.nn.utils.rnn.pad_packed_sequence(

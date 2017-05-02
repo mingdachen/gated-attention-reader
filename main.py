@@ -15,6 +15,8 @@ from utils.minibatch_loader import minibatch_loader
 from utils.misc import to_vars, evaluate, check_dir, load_word2vec_embeddings
 from model import GAReader
 
+USE_CUDA = torch.cuda.is_available()
+
 
 def str2bool(v):
     return v.lower() in ('yes', 'true', 't', '1', 'y')
@@ -32,8 +34,6 @@ def get_args():
                         help='whether to use extra features')
     parser.add_argument('--train_emb', type='bool', default=True,
                         help='whether to train embed')
-    parser.add_argument('--cuda', type='bool', default=False,
-                        help='whether to use CUDA')
     parser.add_argument('--data_dir', type=str, default=None,
                         help='data directory containing input data')
     parser.add_argument('--log_file', type=str, default=None,
@@ -99,8 +99,11 @@ def train(args):
                      args.drop_out, args.gru_size, embed_init, embed_dim,
                      args.train_emb, args.char_dim, args.use_feat,
                      args.gating_fn)
-    if args.cuda:
+    if USE_CUDA:
         model.cuda()
+        for grus in model.main_layers:
+            grus[0].cuda()
+            grus[1].cuda()
     # training phase
     opt = torch.optim.Adam(model.parameters(), lr=args.init_learning_rate)
     logging.info('-' * 50)
@@ -114,11 +117,11 @@ def train(args):
             n_examples += dw.shape[0]
             dw, dt, qw, qt, a, m_dw, m_qw, tt, \
                 tm, c, m_c, cl = to_vars([dw, dt, qw, qt, a, m_dw, m_qw, tt,
-                                         tm, c, m_c, cl])
+                                         tm, c, m_c, cl], use_cuda=USE_CUDA)
             loss_, acc_ = model(dw, dt, qw, qt, a, m_dw, m_qw, tt,
                                 tm, c, m_c, cl, fnames)
-            loss += loss_.data.numpy()[0]
-            acc += acc_.data.numpy()[0]
+            loss += loss_.cpu().data.numpy()[0]
+            acc += acc_.cpu().data.numpy()[0]
             it += 1
             opt.zero_grad()
             loss_.backward()
