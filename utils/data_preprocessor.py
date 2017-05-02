@@ -5,11 +5,11 @@ from __future__ import division
 from __future__ import print_function
 from builtins import range
 
-
 import glob
 import os
 import logging
 from tqdm import tqdm
+import numpy as np
 from multiprocessing.dummy import Pool, Manager
 from functools import partial
 try:
@@ -26,7 +26,7 @@ SYMB_END = "@end"
 class data_holder:
     def __init__(self, dictionary, n_entities, training, validation, test):
         self.dictionary = dictionary
-        self.training = training
+        self.training = np.asarray(training)
         self.validation = validation
         self.test = test
         self.vocab_size = len(dictionary[0])
@@ -36,7 +36,8 @@ class data_holder:
 
 
 class data_preprocessor:
-    def preprocess(self, question_dir, no_training_set=False, use_chars=True):
+    def preprocess(self, question_dir, max_example=None,
+                   no_training_set=False, use_chars=True):
         """
         preprocess all data into a standalone data object.
         the training set will be left out (to save debugging time)
@@ -52,13 +53,13 @@ class data_preprocessor:
         else:
             logging.info("preparing training data ...")
             training = self.parse_all_files(
-                question_dir + "/training", dictionary, use_chars)
+                question_dir + "/training", dictionary, max_example, use_chars)
         logging.info("preparing validation data ...")
         validation = self.parse_all_files(
-            question_dir + "/validation", dictionary, use_chars)
+            question_dir + "/validation", dictionary, None, use_chars)
         logging.info("preparing test data ...")
         test = self.parse_all_files(
-            question_dir + "/test", dictionary, use_chars)
+            question_dir + "/test", dictionary, None, use_chars)
 
         data = data_holder(
             dictionary, num_entities, training, validation, test)
@@ -179,13 +180,13 @@ class data_preprocessor:
         return doc_words, qry_words, ans, cand, \
             doc_chars, qry_chars, cloze, fname
 
-    def parse_all_files(self, directory, dictionary, use_chars):
+    def parse_all_files(self, directory, dictionary, max_example, use_chars):
         """
         parse all files under the given directory into a list of questions,
         where each element is in the form of
         (document, query, answer, filename)
         """
-        all_files = glob.glob(directory + '/*.question')
+        all_files = glob.glob(directory + '/*.question')[: 100]
         manager = Manager()
         w_dict, c_dict = dictionary[0], dictionary[1]
         w_dict_m = manager.dict(w_dict)

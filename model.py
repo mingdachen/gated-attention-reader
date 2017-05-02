@@ -89,24 +89,15 @@ class GAReader(nn.Module):
         qry_embed = self.embed(qry.long())
         if self.use_chars:
             token_embed = self.char_embed(token.long())
-            # pack sequences
-            seq_lengths = torch.sum(token_mask, dim=-1).squeeze(-1)
-            packed_seq = torch.nn.utils.rnn.pack_padded_sequence(
-                token_embed, seq_lengths.data.numpy(), batch_first=True)
-            token_out, _ = self.char_gru(packed_seq)
-            unpacked, unpacked_len = \
-                torch.nn.utils.rnn.pad_packed_sequence(
-                    token_out, batch_first=True)
-            token_fw_out = unpacked[:, -1, :self.char_dim]
-            token_bk_out = unpacked[:, -1, self.char_dim:]
-            token_fw_gru = self.char_fw(
-                token_fw_out.contiguous().view([-1, self.char_dim]))
-            token_fw_out = token_fw_gru.view(
-                [token_fw_out.size()[0], token_fw_out.size()[-1]])
-            token_bk_gru = self.char_bk(
-                token_bk_out.contiguous().view([-1, self.char_dim]))
-            token_bk_out = token_bk_gru.view(
-                [token_bk_out.size()[0], token_bk_out.size()[-1]])
+            gru_out, gru_out_len = gru(token_embed, token_mask, self.char_gru)
+            out_last_idx = (gru_out_len - 1)\
+                .view(-1, 1).expand(
+                    gru_out.size(0), gru_out.size(2)).unsqueeze(1)
+            out_last = gru_out.gather(1, out_last_idx.long()).squeeze()
+            token_fw_out = out_last[:, :self.char_dim]
+            token_bk_out = out_last[:, self.char_dim:]
+            token_fw_out = self.char_fw(token_fw_out)
+            token_bk_out = self.char_bk(token_bk_out)
             merge_token_out = token_fw_out + token_bk_out
             doc_char_embed = merge_token_out.index_select(
                 0, doc_char.long().view([-1])).view(
@@ -117,14 +108,10 @@ class GAReader(nn.Module):
             doc_embed = torch.cat([doc_embed, doc_char_embed], dim=-1)
             qry_embed = torch.cat([qry_embed, qry_char_embed], dim=-1)
         for layer in range(self.n_layers - 1):
-            doc_bi_embed, _ = \
-                self.main_layers[layer][0](doc_embed)
-            doc_bi_embed = doc_bi_embed * \
-                doc_mask.float().unsqueeze(-1).expand_as(doc_bi_embed)
-            qry_bi_embed, _ = \
-                self.main_layers[layer][1](qry_embed)
-            qry_bi_embed = qry_bi_embed * \
-                qry_mask.float().unsqueeze(-1).expand_as(qry_bi_embed)
+            doc_bi_embed, _ = gru(
+                doc_embed, doc_mask, self.main_layers[layer][0])
+            qry_bi_embed, _ = gru(
+                qry_embed, qry_mask, self.main_layers[layer][1])
             interacted = pairwise_interaction(doc_bi_embed, qry_bi_embed)
             doc_inter_embed = gated_attention(
                 doc_bi_embed, qry_bi_embed, interacted, qry_mask,
@@ -134,12 +121,10 @@ class GAReader(nn.Module):
             feat = prepare_input(doc, qry)
             feat_embed = self.feat_embed(feat)
             doc_embed = torch.cat([doc_embed, feat_embed], dim=-1)
-        doc_final_embed, _ = self.final_doc_layer(doc_embed)
-        doc_final_embed = doc_final_embed * \
-            doc_mask.float().unsqueeze(-1).expand_as(doc_final_embed)
-        qry_final_embed, _ = self.final_qry_layer(qry_embed)
-        qry_final_embed = qry_final_embed * \
-            qry_mask.float().unsqueeze(-1).expand_as(qry_final_embed)
+        doc_final_embed, _ = gru(
+            doc_embed, doc_mask, self.final_doc_layer)
+        qry_final_embed, _ = gru(
+            qry_embed, qry_mask, self.final_qry_layer)
         pred = attention_sum(
             doc_final_embed, qry_final_embed, cand, cloze, cand_mask)
         loss = self.criterion(pred, target.long())

@@ -50,6 +50,8 @@ def get_args():
                         help='mini-batch size')
     parser.add_argument('--n_epoch', type=int, default=10,
                         help='number of epochs')
+    parser.add_argument('--max_example', type=int, default=None,
+                        help='number of training examples')
     parser.add_argument('--save_every', type=int, default=1,
                         help='save frequency')
     parser.add_argument('--print_every', type=int, default=50,
@@ -77,15 +79,16 @@ def train(args):
     # load data
     dp = data_preprocessor()
     data = dp.preprocess(
-        args.data_dir, no_training_set=False, use_chars=use_chars)
+        args.data_dir, max_example=args.max_example,
+        no_training_set=False, use_chars=use_chars)
 
     # build minibatch loader
     train_batch_loader = minibatch_loader(
         data.training, args.batch_size, sample=1.0)
     valid_batch_loader = minibatch_loader(
-        data.validation, args.batch_size)
+        data.validation, args.batch_size, shuffle=False)
     test_batch_loader = minibatch_loader(
-        data.test, args.batch_size)
+        data.test, args.batch_size, shuffle=False)
 
     logging.info("loading word2vec file ...")
     embed_init, embed_dim = \
@@ -109,10 +112,6 @@ def train(args):
         for dw, dt, qw, qt, a, m_dw, m_qw, tt, \
                 tm, c, m_c, cl, fnames in train_batch_loader:
             n_examples += dw.shape[0]
-            tt_len = tm.sum(-1)
-            sort_idx = np.argsort(-tt_len)
-            tt = tt[sort_idx]
-            tm = tm[sort_idx]
             dw, dt, qw, qt, a, m_dw, m_qw, tt, \
                 tm, c, m_c, cl = to_vars([dw, dt, qw, qt, a, m_dw, m_qw, tt,
                                          tm, c, m_c, cl])
