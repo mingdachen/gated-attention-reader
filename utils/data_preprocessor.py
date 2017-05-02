@@ -10,7 +10,7 @@ import glob
 import os
 import logging
 from tqdm import tqdm
-from multiprocessing.dummy import Pool
+from multiprocessing.dummy import Pool, Manager
 from functools import partial
 try:
     NUM_THREADS = int(os.environ['OMP_NUM_THREADS'])
@@ -134,13 +134,13 @@ class data_preprocessor:
 
         return word_dictionary, char_dictionary, num_entities
 
-    def parse_one_file(self, fname, dictionary, use_chars):
+    def parse_one_file(self, fname, w_dict, c_dict, use_chars):
         """
         parse a *.question file into tuple(document, query, answer, filename)
         and convert them into indices
         """
-        w_dict, c_dict = dictionary[0], dictionary[1]
-        raw = open(fname, encoding='utf-8').readlines()
+        with open(fname, encoding='utf-8') as fp:
+            raw = fp.readlines()
         doc_raw = raw[2].split()  # document
         qry_raw = raw[4].split()  # query
         ans_raw = raw[6].strip()  # answer
@@ -186,13 +186,18 @@ class data_preprocessor:
         (document, query, answer, filename)
         """
         all_files = glob.glob(directory + '/*.question')
+        manager = Manager()
+        w_dict, c_dict = dictionary[0], dictionary[1]
+        w_dict_m = manager.dict(w_dict)
+        c_dict_m = manager.dict(c_dict)
         with Pool(NUM_THREADS) as pool:
             questions = []
             for question in tqdm(
                 pool.imap_unordered(
                     partial(
                         self.parse_one_file,
-                        dictionary=dictionary,
+                        w_dict=w_dict_m,
+                        c_dict=c_dict_m,
                         use_chars=use_chars),
                     all_files), total=len(all_files)):
                 questions.append(question)
