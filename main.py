@@ -66,7 +66,7 @@ def get_args():
                         help='initial learning rate')
     parser.add_argument('--seed', type=int, default=0,
                         help='random seed for tensorflow')
-    parser.add_argument('--char_dim', type=int, default=50,
+    parser.add_argument('--char_dim', type=int, default=0,
                         help='size of character GRU hidden state')
     parser.add_argument('--gating_fn', type=str, default='torch.mul',
                         help='gating function')

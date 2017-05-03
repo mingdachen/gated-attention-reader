@@ -116,6 +116,8 @@ class data_preprocessor:
             vocab_set = set(word_count.keys())
             entities = set(
                 e for e in vocab_set if e.startswith('@entity'))
+            if vocab_size is None:
+                vocab_size = len(word_count)
             vocab_size_ = vocab_size + len(list(entities)) + 3
             ls = word_count.most_common(vocab_size_)
             # @placehoder, @begin and @end are included in the vocabulary list
@@ -148,7 +150,7 @@ class data_preprocessor:
         logging.info("num characters = %d" % len(char_set))
         logging.info("%d anonymoused entities" % num_entities)
         logging.info("%d other tokens (including @placeholder, %s and %s)" % (
-                     vocab_size - num_entities, SYMB_BEGIN, SYMB_END))
+                     vocab_size_ - num_entities, SYMB_BEGIN, SYMB_END))
 
         return word_dictionary, char_dictionary, num_entities
 
