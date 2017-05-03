@@ -46,6 +46,8 @@ def get_args():
                         help='size of word GRU hidden state')
     parser.add_argument('--n_layers', type=int, default=3,
                         help='number of layers of the model')
+    parser.add_argument('--vocab_size', type=int, default=None,
+                        help='size of vocabulary')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='mini-batch size')
     parser.add_argument('--n_epoch', type=int, default=10,
@@ -79,8 +81,12 @@ def train(args):
     # load data
     dp = data_preprocessor()
     data = dp.preprocess(
-        args.data_dir, max_example=args.max_example,
-        no_training_set=False, use_chars=use_chars)
+        args.data_dir,
+        max_example=args.max_example,
+        vocab_size=args.vocab_size,
+        no_training_set=False,
+        use_chars=use_chars
+    )
 
     # build minibatch loader
     train_batch_loader = minibatch_loader(
@@ -104,6 +110,7 @@ def train(args):
         for grus in model.main_layers:
             grus[0].cuda()
             grus[1].cuda()
+    logging.info("Running on cuda: {}".format(USE_CUDA))
     # training phase
     opt = torch.optim.Adam(model.parameters(), lr=args.init_learning_rate)
     logging.info('-' * 50)
@@ -138,13 +145,15 @@ def train(args):
                 start = time.time()
             if it % args.eval_every == 0:
                 start = time.time()
-                test_loss, test_acc = evaluate(model, valid_batch_loader)
+                test_loss, test_acc = evaluate(
+                    model, valid_batch_loader, USE_CUDA)
                 spend = (time.time() - start) / 60
                 logging.info("Valid loss: {:.3f}, acc: {.3f}, time: {.3f}(m)"
                              .format(test_loss, test_acc, spend))
                 start = time.time()
         start = time.time()
-        test_loss, test_acc = evaluate(model, test_batch_loader)
+        test_loss, test_acc = evaluate(
+            model, test_batch_loader, USE_CUDA)
         spend = (time.time() - start) / 60
         logging.info("Test loss: {:.3f}, acc: {.3f}, time: {.3f}(m)"
                      .format(test_loss, test_acc, spend))

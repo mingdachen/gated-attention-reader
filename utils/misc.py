@@ -17,11 +17,11 @@ dtype = torch.cuda.FloatTensor \
     if torch.cuda.is_available() else torch.FloatTensor
 
 
-def to_var(inputs, use_cuda):
+def to_var(inputs, use_cuda, evaluate=False):
     if use_cuda:
-        return Variable(torch.from_numpy(inputs).cuda())
+        return Variable(torch.from_numpy(inputs).cuda(), volatile=evaluate)
     else:
-        return Variable(torch.from_numpy(inputs))
+        return Variable(torch.from_numpy(inputs), volatile=evaluate)
 
 
 def to_vars(inputs, use_cuda):
@@ -108,18 +108,16 @@ def prepare_input(d, q):
     return f
 
 
-def evaluate(model, data):
+def evaluate(model, data, use_cuda):
     acc = loss = n_examples = 0
     for dw, dt, qw, qt, a, m_dw, m_qw, tt, \
             tm, c, m_c, cl, fnames in data:
         n_examples += dw.shape[0]
-        tt_len = tm.sum(-1)
-        sort_idx = np.argsort(-tt_len)
-        tt = tt[sort_idx]
-        tm = tm[sort_idx]
         dw, dt, qw, qt, a, m_dw, m_qw, tt, \
             tm, c, m_c, cl = to_vars([dw, dt, qw, qt, a, m_dw, m_qw, tt,
-                                     tm, c, m_c, cl])
+                                     tm, c, m_c, cl],
+                                     use_cuda=use_cuda,
+                                     evaluate=True)
         loss_, acc_ = model(dw, dt, qw, qt, a, m_dw, m_qw, tt,
                             tm, c, m_c, cl, fnames)
         loss += loss_.data.numpy()[0]
