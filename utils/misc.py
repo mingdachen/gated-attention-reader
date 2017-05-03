@@ -24,8 +24,8 @@ def to_var(inputs, use_cuda, evaluate=False):
         return Variable(torch.from_numpy(inputs), volatile=evaluate)
 
 
-def to_vars(inputs, use_cuda):
-    return [to_var(inputs_, use_cuda) for inputs_ in inputs]
+def to_vars(inputs, use_cuda, evaluate=False):
+    return [to_var(inputs_, use_cuda, evaluate) for inputs_ in inputs]
 
 
 def show_predicted_vs_ground_truth(probs, a, inv_dict):
@@ -120,6 +120,6 @@ def evaluate(model, data, use_cuda):
                                      evaluate=True)
         loss_, acc_ = model(dw, dt, qw, qt, a, m_dw, m_qw, tt,
                             tm, c, m_c, cl, fnames)
-        loss += loss_.data.numpy()[0]
-        acc += acc_.data.numpy()[0]
+        loss += loss_.cpu().data.numpy()[0]
+        acc += acc_.cpu().data.numpy()[0]
     return loss / len(data), acc / n_examples

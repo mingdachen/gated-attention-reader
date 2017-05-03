@@ -48,7 +48,8 @@ class GAReader(nn.Module):
             self.embed.weight.data.copy_(torch.from_numpy(embed_init))
         if not train_emb:
             self.embed.weight.requires_grad = False
-        self.main_layers = []
+        self.main_doc_layers = nn.ModuleList()
+        self.main_qry_layers = nn.ModuleList()
         if self.use_chars:
             main_input_feat = embed_dim + self.embed_dim // 2
         else:
@@ -64,7 +65,8 @@ class GAReader(nn.Module):
                 hidden_size=self.gru_size,
                 batch_first=True,
                 bidirectional=True)
-            self.main_layers.append([layer_doc, layer_qry])
+            self.main_doc_layers.append(layer_doc)
+            self.main_qry_layers.append(layer_qry)
         if use_feat:
             final_input_feat = self.gru_size * 2 + 2
         else:
@@ -109,9 +111,9 @@ class GAReader(nn.Module):
             qry_embed = torch.cat([qry_embed, qry_char_embed], dim=-1)
         for layer in range(self.n_layers - 1):
             doc_bi_embed, _ = gru(
-                doc_embed, doc_mask, self.main_layers[layer][0])
+                doc_embed, doc_mask, self.main_doc_layers[layer])
             qry_bi_embed, _ = gru(
-                qry_embed, qry_mask, self.main_layers[layer][1])
+                qry_embed, qry_mask, self.main_qry_layers[layer])
             interacted = pairwise_interaction(doc_bi_embed, qry_bi_embed)
             doc_inter_embed = gated_attention(
                 doc_bi_embed, qry_bi_embed, interacted, qry_mask,

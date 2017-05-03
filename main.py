@@ -107,14 +107,12 @@ def train(args):
                      args.gating_fn)
     if USE_CUDA:
         model.cuda()
-        for grus in model.main_layers:
-            grus[0].cuda()
-            grus[1].cuda()
     logging.info("Running on cuda: {}".format(USE_CUDA))
     # training phase
     opt = torch.optim.Adam(model.parameters(), lr=args.init_learning_rate)
     logging.info('-' * 50)
     logging.info("Start training ...")
+    best_valid_acc = best_test_acc = 0
     model.train()
     for epoch in range(args.n_epoch):
         acc = loss = n_examples = it = 0
@@ -136,7 +134,7 @@ def train(args):
             opt.step()
             if it % args.print_every == 0:
                 spend = (time.time() - start) / 60
-                statement = "epoch: {}, it: {} (max: {}), time: {:.3f}(m), "\
+                statement = "Epoch: {}, it: {} (max: {}), time: {:.3f}(m), "\
                     .format(epoch, it, len(train_batch_loader), spend)
                 statement += "loss: {:.3f}, acc: {:.3f}"\
                     .format(loss / args.print_every, acc / n_examples)
@@ -145,18 +143,27 @@ def train(args):
                 start = time.time()
             if it % args.eval_every == 0:
                 start = time.time()
+                model.eval()
                 test_loss, test_acc = evaluate(
                     model, valid_batch_loader, USE_CUDA)
                 spend = (time.time() - start) / 60
-                logging.info("Valid loss: {:.3f}, acc: {.3f}, time: {.3f}(m)"
+                logging.info("Valid loss: {:.3f}, acc: {:.3f}, time: {:.3f}(m)"
                              .format(test_loss, test_acc, spend))
+                if best_valid_acc < test_acc:
+                    best_valid_acc = test_acc
+                logging.info("Best valid acc: {:.3f}".format(best_valid_acc))
+                model.train()
                 start = time.time()
         start = time.time()
+        model.eval()
         test_loss, test_acc = evaluate(
             model, test_batch_loader, USE_CUDA)
         spend = (time.time() - start) / 60
-        logging.info("Test loss: {:.3f}, acc: {.3f}, time: {.3f}(m)"
+        logging.info("Test loss: {:.3f}, acc: {:.3f}, time: {:.3f}(m)"
                      .format(test_loss, test_acc, spend))
+        if best_test_acc < test_acc:
+            best_test_acc = test_acc
+        logging.info("Best test acc: {:.3f}".format(best_test_acc))
 
 
 if __name__ == "__main__":
