@@ -113,8 +113,8 @@ def train(args):
     logging.info('-' * 50)
     logging.info("Start training ...")
     best_valid_acc = best_test_acc = 0
-    model.train()
     for epoch in range(args.n_epoch):
+        model.train()
         acc = loss = n_examples = it = 0
         start = time.time()
         for dw, dt, qw, qt, a, m_dw, m_qw, tt, \
