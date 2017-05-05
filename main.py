@@ -10,6 +10,7 @@ import numpy as np
 import time
 import os
 import logging
+from torch.nn.utils import clip_grad_norm
 from utils.data_preprocessor import data_preprocessor
 from utils.minibatch_loader import minibatch_loader
 from utils.misc import to_vars, evaluate, check_dir, load_word2vec_embeddings
@@ -109,11 +110,18 @@ def train(args):
         model.cuda()
     logging.info("Running on cuda: {}".format(USE_CUDA))
     # training phase
-    opt = torch.optim.Adam(model.parameters(), lr=args.init_learning_rate)
+    opt = torch.optim.Adam(
+        params=filter(
+            lambda p: p.requires_grad, model.parameters()
+        ),
+        lr=args.init_learning_rate)
     logging.info('-' * 50)
     logging.info("Start training ...")
     best_valid_acc = best_test_acc = 0
     for epoch in range(args.n_epoch):
+        if epoch >= 2:
+            for param_group in opt.param_groups:
+                param_group['lr'] /= 2
         model.train()
         acc = loss = n_examples = it = 0
         start = time.time()
@@ -130,9 +138,14 @@ def train(args):
             it += 1
             opt.zero_grad()
             loss_.backward()
-            torch.nn.utils.clip_grad_norm(model.parameters(), args.grad_clip)
+            clip_grad_norm(
+                parameters=filter(
+                    lambda p: p.requires_grad, model.parameters()
+                ),
+                max_norm=args.grad_clip)
             opt.step()
-            if it % args.print_every == 0:
+            if it % args.print_every == 0 \
+                    or it % len(train_batch_loader) == 0:
                 spend = (time.time() - start) / 60
                 statement = "Epoch: {}, it: {} (max: {}), time: {:.3f}(m), "\
                     .format(epoch, it, len(train_batch_loader), spend)

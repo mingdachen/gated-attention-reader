@@ -131,5 +131,7 @@ class GAReader(nn.Module):
             doc_final_embed, qry_final_embed, cand, cloze, cand_mask)
         loss = self.criterion(pred, target.long())
         prob, pred_ans = torch.max(pred, dim=1)
+        # prob_ = prob.gather(1, target.view(-1, 1).long())
+        # print(prob_)
         acc = torch.sum(torch.eq(pred_ans, target.long()))
         return loss, acc
