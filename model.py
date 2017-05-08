@@ -175,9 +175,7 @@ class GAReader:
         self.pred = attention_sum(
             doc_embed_final, qry_embed_final, self.cand,
             self.cloze, self.cand_mask)
-        self.loss = tf.reduce_mean(
-            tf.nn.sparse_softmax_cross_entropy_with_logits(
-                labels=self.target, logits=self.pred, name="cross_entropy"))
+        self.loss = tf.reduce_mean(crossentropy(self.pred, self.target))
         self.pred_ans = tf.cast(tf.argmax(self.pred, axis=1), tf.int32)
         self.test = tf.cast(tf.equal(self.target, self.pred_ans), tf.float32)
         self.accuracy = tf.reduce_sum(

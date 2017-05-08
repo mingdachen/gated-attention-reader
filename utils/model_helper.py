@@ -52,3 +52,14 @@ def attention_sum(doc, qry, cand, cloze, cand_mask=None):
     pm = tf.expand_dims(pm, axis=1)  # B x 1 x N
     return tf.squeeze(
         tf.matmul(pm, tf.cast(cand, tf.float32)), axis=1)  # B x C
+
+
+def crossentropy(pred, target):
+    """
+    pred: B x C
+    target: B x 1
+    """
+    idx = tf.expand_dims(tf.range(tf.shape(target)[0]), 1)
+    idx = tf.concat([idx, tf.expand_dims(target, 1)], axis=-1)
+    logit = tf.gather_nd(pred, idx)  # B x 1
+    return - tf.log(logit)
