@@ -5,15 +5,24 @@ from __future__ import division
 from __future__ import print_function
 from builtins import range
 
-
 import glob
 import os
 import logging
+import numpy as np
+from tqdm import tqdm
+from multiprocessing.dummy import Pool
+from functools import partial
+try:
+    env_threads = int(os.environ['OMP_NUM_THREADS'])
+    NUM_THREADS = 10 if env_threads < 10 else env_threads
+except KeyError:
+    NUM_THREADS = 10
 
 MAX_WORD_LEN = 10
 
 SYMB_BEGIN = "@begin"
 SYMB_END = "@end"
+UNK = "UNK"
 
 
 class data_holder:
@@ -29,7 +38,8 @@ class data_holder:
 
 
 class data_preprocessor:
-    def preprocess(self, question_dir, no_training_set=False, use_chars=True):
+    def preprocess(self, question_dir, max_example=None,
+                   no_training_set=False, use_chars=True):
         """
         preprocess all data into a standalone data object.
         the training set will be left out (to save debugging time)
@@ -38,20 +48,21 @@ class data_preprocessor:
         vocab_f = os.path.join(question_dir, "vocab.txt")
         word_dictionary, char_dictionary, num_entities = \
             self.make_dictionary(
-                question_dir, vocab_file=vocab_f)
+                question_dir,
+                vocab_file=vocab_f)
         dictionary = (word_dictionary, char_dictionary)
         if no_training_set:
             training = None
         else:
             logging.info("preparing training data ...")
             training = self.parse_all_files(
-                question_dir + "/training", dictionary, use_chars)
+                question_dir + "/training", dictionary, max_example, use_chars)
         logging.info("preparing validation data ...")
         validation = self.parse_all_files(
-            question_dir + "/validation", dictionary, use_chars)
+            question_dir + "/validation", dictionary, None, use_chars)
         logging.info("preparing test data ...")
         test = self.parse_all_files(
-            question_dir + "/test", dictionary, use_chars)
+            question_dir + "/test", dictionary, None, use_chars)
 
         data = data_holder(
             dictionary, num_entities, training, validation, test)
@@ -77,24 +88,25 @@ class data_preprocessor:
                 os.path.join(question_dir, 'training', '*.question'))
 
             vocab_set = set()
-            n = 0.
-            for fname in fnames:
+
+            def process(fname, vocab_set):
                 # print("processing: ", fname)
-                fp = open(fname, encoding='utf-8')
-                fp.readline()
-                fp.readline()
-                document = fp.readline().split()
-                fp.readline()
-                query = fp.readline().split()
-                fp.close()
+                with open(fname, encoding='utf-8') as fp:
+                    fp.readline()
+                    fp.readline()
+                    document = fp.readline().split()
+                    fp.readline()
+                    query = fp.readline().split()
 
                 vocab_set |= set(document) | set(query)
 
-                # show progress
-                n += 1
-                if n % 10000 == 0:
-                    print('%3d%%' % int(100 * n / len(fnames)))
-
+            logging.info("Processing with {} threads ...".format(NUM_THREADS))
+            with Pool(NUM_THREADS) as pool:
+                pool.map(
+                    partial(
+                        process,
+                        vocab_set=vocab_set),
+                    fnames)
             entities = set(e for e in vocab_set if e.startswith('@entity'))
 
             # @placehoder, @begin and @end are included in the vocabulary list
@@ -103,26 +115,25 @@ class data_preprocessor:
             tokens.add(SYMB_END)
 
             vocabularies = list(entities) + list(tokens)
-
+            vocabularies.insert(0, UNK)
             logging.info("writing vocabularies to " + vocab_file + " ...")
             vocab_fp = open(vocab_file, "w", encoding='utf-8')
             vocab_fp.write('\n'.join(vocabularies))
             vocab_fp.close()
-        # print(type(vocabularies))
-        vocab_size = len(vocabularies)
+        vocab_size_ = len(vocabularies)
         # word dictionary: word -> index
-        word_dictionary = dict(zip(vocabularies, range(vocab_size)))
+        word_dictionary = dict(zip(vocabularies, range(vocab_size_)))
         char_set = set([c for w in vocabularies for c in list(w)])
         char_set.add(' ')
         # char dictionary: char -> index
         char_dictionary = dict(zip(list(char_set), range(len(char_set))))
         num_entities = len(
             [v for v in vocabularies if v.startswith('@entity')])
-        logging.info("vocab_size = %d" % vocab_size)
+        logging.info("vocab_size = %d" % vocab_size_)
         logging.info("num characters = %d" % len(char_set))
         logging.info("%d anonymoused entities" % num_entities)
         logging.info("%d other tokens (including @placeholder, %s and %s)" % (
-                     vocab_size - num_entities, SYMB_BEGIN, SYMB_END))
+                     vocab_size_ - num_entities, SYMB_BEGIN, SYMB_END))
 
         return word_dictionary, char_dictionary, num_entities
 
@@ -132,7 +143,8 @@ class data_preprocessor:
         and convert them into indices
         """
         w_dict, c_dict = dictionary[0], dictionary[1]
-        raw = open(fname, encoding='utf-8').readlines()
+        with open(fname, encoding='utf-8') as fp:
+            raw = fp.readlines()
         doc_raw = raw[2].split()  # document
         qry_raw = raw[4].split()  # query
         ans_raw = raw[6].strip()  # answer
@@ -153,8 +165,8 @@ class data_preprocessor:
             cloze = qry_raw.index('@placeholder')
 
         # tokens/entities --> indexes
-        doc_words = list(map(lambda w: w_dict[w], doc_raw))
-        qry_words = list(map(lambda w: w_dict[w], qry_raw))
+        doc_words = list(map(lambda w: w_dict.get(w, 0), doc_raw))
+        qry_words = list(map(lambda w: w_dict.get(w, 0), qry_raw))
         if use_chars:
             doc_chars = list(
                 map(lambda w: map(lambda c: c_dict.get(c, c_dict[' ']),
@@ -168,17 +180,24 @@ class data_preprocessor:
         ans = list(map(lambda w: w_dict.get(w, 0), ans_raw.split()))
         cand = [list(map(lambda w:w_dict.get(w, 0), c)) for c in cand_raw]
 
-        return doc_words, qry_words, ans, cand, doc_chars, qry_chars, cloze
+        return doc_words, qry_words, ans, cand, \
+            doc_chars, qry_chars, cloze, fname
 
-    def parse_all_files(self, directory, dictionary, use_chars):
+    def parse_all_files(self, directory, dictionary, max_example, use_chars):
         """
         parse all files under the given directory into a list of questions,
         where each element is in the form of
         (document, query, answer, filename)
         """
-        all_files = glob.glob(directory + '/*.question')
-        questions = [self.parse_one_file(f, dictionary, use_chars) +
-                     (f, ) for f in all_files]
+        all_files = glob.glob(directory + '/*.question')[: max_example]
+        logging.info("Processing with {} threads ...".format(NUM_THREADS))
+        with Pool(NUM_THREADS) as pool:
+            questions = pool.map(
+                partial(
+                    self.parse_one_file,
+                    dictionary=dictionary,
+                    use_chars=use_chars),
+                all_files)
         return questions
 
     def gen_text_for_word2vec(self, question_dir, text_file):

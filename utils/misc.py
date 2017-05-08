@@ -12,6 +12,19 @@ import logging
 EMBED_DIM = 128
 
 
+def show_data(seqs, inv_dict):
+    def inv_vocab(x):
+        return inv_dict[x]
+    tmp = ""
+    for seq in seqs:
+        if isinstance(seq, np.int32):
+            tmp += inv_dict[seq] + ' '
+        else:
+            print(' '.join(list(map(inv_vocab, seq))))
+    if tmp != "":
+        print(tmp)
+
+
 def show_predicted_vs_ground_truth(probs, a, inv_dict):
     predicted_ans = list(map(
         lambda i: inv_dict[i], list(np.argmax(probs, axis=1))))

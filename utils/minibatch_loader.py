@@ -25,7 +25,9 @@ class minibatch_loader:
         self.max_word_len = MAX_WORD_LEN
         self.shuffle = shuffle
         self.reset()
-        self.n_batches = len(self.batch_pool)
+
+    def __len__(self):
+        return len(self.batch_pool)
 
     def __iter__(self):
         """make the object iterable"""
@@ -88,11 +90,11 @@ class minibatch_loader:
 
         # document words
         dw = np.zeros(
-            (curr_batch_size, curr_max_doc_len, 1),
+            (curr_batch_size, curr_max_doc_len),
             dtype='int32')
         # query words
         qw = np.zeros(
-            (curr_batch_size, self.max_qry_len, 1),
+            (curr_batch_size, self.max_qry_len),
             dtype='int32')
         # candidate answers
         c = np.zeros(
@@ -126,8 +128,8 @@ class minibatch_loader:
                 qry_c, cloze, fname = self.questions[ix]
 
             # document, query and candidates
-            dw[n, : len(doc_w), 0] = np.array(doc_w)
-            qw[n, : len(qry_w), 0] = np.array(qry_w)
+            dw[n, : len(doc_w)] = np.array(doc_w)
+            qw[n, : len(qry_w)] = np.array(qry_w)
             m_dw[n, : len(doc_w)] = 1
             m_qw[n, : len(qry_w)] = 1
             for it, word in enumerate(doc_c):

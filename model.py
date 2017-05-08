@@ -10,6 +10,7 @@ from tensorflow.contrib.rnn import GRUCell as GRU
 import time
 import os
 import logging
+from tqdm import trange
 from utils.misc import prepare_input
 from utils.model_helper import *
 from utils.data_preprocessor import MAX_WORD_LEN
@@ -37,9 +38,9 @@ class GAReader:
         """
         # word input
         self.doc = tf.placeholder(
-            tf.int32, [None, None, 1], name="doc")
+            tf.int32, [None, None], name="doc")
         self.qry = tf.placeholder(
-            tf.int32, [None, None, 1], name="query")
+            tf.int32, [None, None], name="query")
         self.cand = tf.placeholder(
             tf.int32, [None, None, None], name="cand_ans")
         self.target = tf.placeholder(
@@ -68,9 +69,6 @@ class GAReader:
             tf.int32, [None, None], name="features")
 
         # model parameters
-        self.global_step = tf.Variable(0, trainable=False)
-        self.n_epoch = tf.Variable(0, trainable=False)
-        self.epoch_update = tf.assign_add(self.n_epoch, 1)
         self.lr = tf.placeholder(tf.float32, name="learning_rate")
         self.keep_prob = tf.placeholder(tf.float32, name="keep_prob")
 
@@ -83,10 +81,8 @@ class GAReader:
         else:
             word_embedding = tf.Variable(embed_init, trainable=self.train_emb,
                                          name="word_embedding")
-        doc_embed = tf.squeeze(
-            tf.nn.embedding_lookup(word_embedding, self.doc), axis=2)
-        qry_embed = tf.squeeze(
-            tf.nn.embedding_lookup(word_embedding, self.qry), axis=2)
+        doc_embed = tf.nn.embedding_lookup(word_embedding, self.doc)
+        qry_embed = tf.nn.embedding_lookup(word_embedding, self.qry)
 
         # feature embedding
         feature_embedding = tf.get_variable(
@@ -126,7 +122,7 @@ class GAReader:
             inter = pairwise_interaction(doc_embed, qry_embed)
             self.attentions.append(inter)
 
-        for i in range(self.n_layers):
+        for i in range(self.n_layers - 1):
             fw_doc = GRU(self.gru_size)
             bk_doc = GRU(self.gru_size)
             seq_length = tf.reduce_sum(self.doc_mask, axis=1)
@@ -145,14 +141,13 @@ class GAReader:
                 dtype=tf.float32, scope="{}_layer_qry_rnn".format(i))
             qry_bi_embed = tf.concat([fw_qry_states, bk_qry_states], axis=2)
 
-            interacted_embed = pairwise_interaction(
-                doc_bi_embed, qry_bi_embed)
+            inter = pairwise_interaction(doc_bi_embed, qry_bi_embed)
             doc_inter_embed = gated_attention(
-                doc_bi_embed, qry_bi_embed, interacted_embed, self.qry_mask,
+                doc_bi_embed, qry_bi_embed, inter, self.qry_mask,
                 gating_fn=self.gating_fn)
-            tf.nn.dropout(doc_inter_embed, self.keep_prob)
+            doc_embed = tf.nn.dropout(doc_inter_embed, self.keep_prob)
             if self.save_attn:
-                self.attentions.append(interacted_embed)
+                self.attentions.append(inter)
 
         if self.use_feat:
             doc_embed = tf.concat([doc_embed, feat_embed], axis=2)
@@ -185,7 +180,7 @@ class GAReader:
                 labels=self.target, logits=self.pred, name="cross_entropy"))
         self.pred_ans = tf.cast(tf.argmax(self.pred, axis=1), tf.int32)
         self.test = tf.cast(tf.equal(self.target, self.pred_ans), tf.float32)
-        self.accuracy = tf.reduce_mean(
+        self.accuracy = tf.reduce_sum(
             tf.cast(tf.equal(self.target, self.pred_ans), tf.float32))
         vars_list = tf.trainable_variables()
         optimizer = tf.train.AdamOptimizer(self.lr)
@@ -194,8 +189,7 @@ class GAReader:
             tf.gradients(self.loss, vars_list), grad_clip)
         # for grad, var in zip(grads, vars_list):
         #     tf.summary.histogram(var.name + '/gradient', grad)
-        self.updates = optimizer.apply_gradients(
-            zip(grads, vars_list), global_step=self.global_step)
+        self.updates = optimizer.apply_gradients(zip(grads, vars_list))
         self.save_vars()
 
     def save_vars(self):
@@ -219,84 +213,67 @@ class GAReader:
         tf.add_to_collection('loss', self.loss)
         tf.add_to_collection('accuracy', self.accuracy)
         tf.add_to_collection('updates', self.updates)
-        tf.add_to_collection('global_step', self.global_step)
-        tf.add_to_collection('n_epoch', self.n_epoch)
-        tf.add_to_collection('epoch_update', self.epoch_update)
         tf.add_to_collection('learning_rate', self.lr)
 
-    def train(self, sess, dropout, learning_rate, print_every, save_every,
-              checkpoint_dir, data, saver):
+    def train(self, sess, dw, dt, qw, qt, a, m_dw, m_qw, tt,
+              tm, c, m_c, cl, fnames, dropout, learning_rate):
         """
         train model
         Args:
         - data: (object) containing training data
         """
-        start = time.time()
-        loss = acc = 0
-        current_epoch = sess.run(self.n_epoch)
-        for dw, dt, qw, qt, a, m_dw, m_qw, tt, \
-                tm, c, m_c, cl, fnames in data:
+        feed_dict = {self.doc: dw, self.qry: qw,
+                     self.doc_char: dt, self.qry_char: qt, self.target: a,
+                     self.doc_mask: m_dw, self.qry_mask: m_qw,
+                     self.token: tt, self.char_mask: tm,
+                     self.cand: c, self.cand_mask: m_c,
+                     self.cloze: cl, self.keep_prob: 1 - dropout,
+                     self.lr: learning_rate}
+        if self.use_feat:
             feat = prepare_input(dw, qw)
-            feed_dict = {self.doc: dw, self.qry: qw,
-                         self.doc_char: dt,
-                         self.qry_char: qt, self.target: a,
-                         self.doc_mask: m_dw, self.qry_mask: m_qw,
-                         self.token: tt, self.char_mask: tm,
-                         self.cand: c, self.cand_mask: m_c,
-                         self.cloze: cl, self.feat: feat,
-                         self.keep_prob: 1 - dropout,
-                         self.lr: learning_rate}
-            loss_, acc_, _, it = \
-                sess.run([self.loss, self.accuracy, self.updates,
-                         self.global_step], feed_dict)
-            loss += loss_
-            acc += acc_
-            if it % print_every == 0:
-                spend = (time.time() - start) / 60
-                statement = "epoch: {}, it: {} (max: {}), time: {:.3f}, "\
-                    .format(current_epoch, it, data.n_batches, spend)
-                statement += "loss: {:.3f}, acc: {:.3f}"\
-                    .format(loss / print_every, acc / print_every)
-                logging.info(statement)
-                loss = acc = 0
-                start = time.time()
-        current_epoch = sess.run(self.epoch_update)
-        # save model
-        if current_epoch % save_every == 0:
-            checkpoint_path = os.path.join(checkpoint_dir, 'model.ckpt')
-            saver.save(sess, checkpoint_path)
-            logging.info("model saved to {}".format(checkpoint_path))
+            feed_dict += {self.feat: feat}
+
+        loss, acc, _, = \
+            sess.run([self.loss, self.accuracy, self.updates], feed_dict)
+        return loss, acc
 
     def validate(self, sess, data):
         """
         test the model
         """
-        loss = acc = n_batch = 0
+        loss = acc = n_exmple = 0
+        tr = trange(
+            len(data),
+            desc="loss: {:.3f}, acc: {:.3f}".format(0.0, 0.0),
+            leave=False)
         for dw, dt, qw, qt, a, m_dw, m_qw, tt, \
                 tm, c, m_c, cl, fnames in data:
             start = time.time()
-            feat = prepare_input(dw, qw)
             feed_dict = {self.doc: dw, self.qry: qw,
-                         self.doc_char: dt,
-                         self.qry_char: qt, self.target: a,
+                         self.doc_char: dt, self.qry_char: qt, self.target: a,
                          self.doc_mask: m_dw, self.qry_mask: m_qw,
                          self.token: tt, self.char_mask: tm,
                          self.cand: c, self.cand_mask: m_c,
-                         self.cloze: cl, self.feat: feat,
-                         self.keep_prob: 1.0,
+                         self.cloze: cl, self.keep_prob: 1.,
                          self.lr: 0.}
+            if self.use_feat:
+                feat = prepare_input(dw, qw)
+                feed_dict += {self.feat: feat}
             _loss, _acc = sess.run([self.loss, self.accuracy], feed_dict)
-            n_batch += 1
+            n_exmple += dw.shape[0]
             loss += _loss
             acc += _acc
-        loss /= n_batch
-        acc /= n_batch
+            tr.set_description("loss: {:.3f}, acc: {:.3f}".
+                               format(_loss, _acc / dw.shape[0]))
+            tr.update()
+        tr.close()
+        loss /= n_exmple
+        acc /= n_exmple
         spend = (time.time() - start) / 60
-        statement = "testing stats: time: {:.3f}, loss: {:.3f}, "\
-            .format(spend, loss)
-        statement += "acc: {:.3f}, time/batch:{:.3f}"\
-            .format(acc, spend / n_batch)
+        statement = "loss: {:.3f}, acc: {:.3f}, time: {:.1f}(m)"\
+            .format(loss, acc, spend)
         logging.info(statement)
+        return loss, acc
 
     def restore(self, sess, checkpoint_dir):
         """
@@ -324,7 +301,9 @@ class GAReader:
         self.loss = tf.get_collection('loss')[0]
         self.accuracy = tf.get_collection('accuracy')[0]
         self.updates = tf.get_collection('updates')[0]
-        self.global_step = tf.get_collection('global_step')[0]
-        self.epoch_update = tf.get_collection('epoch_update')[0]
-        self.n_epoch = tf.get_collection('n_epoch')[0]
         self.lr = tf.get_collection('learning_rate')[0]
+
+    def save(self, sess, saver, checkpoint_dir):
+        checkpoint_path = os.path.join(checkpoint_dir, 'model.ckpt')
+        saver.save(sess, checkpoint_path)
+        logging.info("model saved to {}".format(checkpoint_path))
