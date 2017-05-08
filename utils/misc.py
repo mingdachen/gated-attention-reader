@@ -11,6 +11,7 @@ import numpy as np
 import sys
 import os
 import logging
+from tqdm import trange
 
 EMBED_DIM = 128
 dtype = torch.cuda.FloatTensor \
@@ -110,6 +111,10 @@ def prepare_input(d, q):
 
 def evaluate(model, data, use_cuda):
     acc = loss = n_examples = 0
+    tr = trange(
+        len(data),
+        desc="loss: {:.3f}, acc: {:.3f}".format(0.0, 0.0),
+        leave=False)
     for dw, dt, qw, qt, a, m_dw, m_qw, tt, \
             tm, c, m_c, cl, fnames in data:
         n_examples += dw.shape[0]
@@ -120,6 +125,12 @@ def evaluate(model, data, use_cuda):
                                      evaluate=True)
         loss_, acc_ = model(dw, dt, qw, qt, a, m_dw, m_qw, tt,
                             tm, c, m_c, cl, fnames)
-        loss += loss_.cpu().data.numpy()[0]
-        acc += acc_.cpu().data.numpy()[0]
+        _loss = loss_.cpu().data.numpy()[0]
+        _acc = acc_.cpu().data.numpy()[0]
+        loss += _loss
+        acc += _acc
+        tr.set_description("loss: {:.3f}, acc: {:.3f}".
+                           format(_loss, _acc / dw.shape[0]))
+        tr.update()
+    tr.close()
     return loss / len(data), acc / n_examples
