@@ -19,9 +19,7 @@ class minibatch_loader:
         else:
             self.questions = random.sample(
                 questions, int(sample * len(questions)))
-        # self.bins = self.build_bins(self.questions)
-        # self.max_qry_len = max(list(map(lambda x: len(x[1]), self.questions)))
-        # self.max_num_cand = max(list(map(lambda x: len(x[3]), self.questions)))
+        self.max_num_cand = max(list(map(lambda x: len(x[3]), self.questions)))
         self.max_word_len = MAX_WORD_LEN
         self.shuffle = shuffle
         self.reset()
@@ -33,37 +31,10 @@ class minibatch_loader:
         """make the object iterable"""
         return self
 
-    def build_bins(self, questions):
-        """
-        returns a dictionary
-            key: document length (rounded to the powers of two)
-            value: indexes of questions with document length equal to key
-        """
-        # round the input to the nearest power of two
-        def round_to_power(x):
-            return 2 ** (int(np.log2(x - 1)) + 1)
-        doc_len = list(map(lambda x: round_to_power(len(x[0])), questions))
-        bins = {}
-        for i, l in enumerate(doc_len):
-            if l not in bins:
-                bins[l] = []
-            bins[l].append(i)
-
-        return bins
-
     def reset(self):
         """new iteration"""
         self.ptr = 0
 
-        # randomly shuffle the question indices in each bin
-        # if self.shuffle:
-        #     for ixs in self.bins.values():
-        #         random.shuffle(ixs)
-
-        # construct a list of mini-batches where each batch
-        # is a list of question indices
-        # questions within the same batch have identical max
-        # document length
         self.batch_pool = []
         n = len(self.questions)
         idx_list = np.arange(0, n, self.batch_size)
@@ -74,18 +45,6 @@ class minibatch_loader:
         for idx in idx_list:
             self.batch_pool.append(
                 np.arange(idx, min(idx + self.batch_size, n)))
-        # for l, ixs in self.bins.items():
-        #     n = len(ixs)
-        #     k = n / self.batch_size if \
-        #         n % self.batch_size == 0 else n / self.batch_size + 1
-        #     ixs_list = [(ixs[self.batch_size * i:
-        #                 min(n, self.batch_size * (i + 1))], l)
-        #                 for i in range(int(k))]
-        #     self.batch_pool += ixs_list
-
-        # # randomly shuffle the mini-batches
-        # if self.shuffle:
-        #     random.shuffle(self.batch_pool)
 
     def __next__(self):
         """load the next batch"""
@@ -96,10 +55,8 @@ class minibatch_loader:
         ixs = self.batch_pool[self.ptr]
         doc_len = [len(self.questions[idx][0]) for idx in ixs]
         qry_len = [len(self.questions[idx][1]) for idx in ixs]
-        num_cand = [len(self.questions[idx][3]) for idx in ixs]
         curr_max_doc_len = np.max(doc_len)
         curr_max_qry_len = np.max(qry_len)
-        curr_max_num_cand = np.max(num_cand)
         curr_batch_size = len(ixs)
 
         # document words
@@ -112,7 +69,7 @@ class minibatch_loader:
             dtype='int32')
         # candidate answers
         c = np.zeros(
-            (curr_batch_size, curr_max_doc_len, curr_max_num_cand),
+            (curr_batch_size, curr_max_doc_len, self.max_num_cand),
             dtype='int16')
         # position of cloze in query
         cl = np.zeros(

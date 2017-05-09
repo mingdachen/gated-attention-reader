@@ -54,7 +54,8 @@ def get_args():
     parser.add_argument('--n_epoch', type=int, default=10,
                         help='number of epochs')
     parser.add_argument('--max_example', type=int, default=None,
-                        help='number of training examples')
+                        help='maximum number of training examples: \
+                        None (default)')
     parser.add_argument('--save_every', type=int, default=1,
                         help='save frequency')
     parser.add_argument('--print_every', type=int, default=50,
@@ -66,11 +67,11 @@ def get_args():
     parser.add_argument('--init_learning_rate', type=float, default=5e-4,
                         help='initial learning rate')
     parser.add_argument('--seed', type=int, default=0,
-                        help='random seed for tensorflow')
+                        help='random seed')
     parser.add_argument('--char_dim', type=int, default=0,
                         help='size of character GRU hidden state')
-    parser.add_argument('--gating_fn', type=str, default='torch.mul',
-                        help='gating function')
+    parser.add_argument('--gating_fn', type=str, default='tmul',
+                        help='gating function: tcat, tsum, tmul (default)')
     parser.add_argument('--drop_out', type=float, default=0.1,
                         help='dropout rate')
     args = parser.parse_args()
@@ -147,10 +148,10 @@ def train(args):
             if it % args.print_every == 0 \
                     or it % len(train_batch_loader) == 0:
                 spend = (time.time() - start) / 60
-                statement = "Epoch: {}, it: {} (max: {}), time: {:.3f}(m), "\
-                    .format(epoch, it, len(train_batch_loader), spend)
-                statement += "loss: {:.3f}, acc: {:.3f}"\
-                    .format(loss / args.print_every, acc / n_examples)
+                statement = "Epoch: {}, it: {} (max: {}), "\
+                    .format(epoch, it, len(train_batch_loader))
+                statement += "loss: {:.3f}, acc: {:.3f}, time: {:.1f}(m)"\
+                    .format(loss / args.print_every, acc / n_examples, spend)
                 logging.info(statement)
                 acc = loss = n_examples = 0
                 start = time.time()
@@ -160,7 +161,7 @@ def train(args):
                 test_loss, test_acc = evaluate(
                     model, valid_batch_loader, USE_CUDA)
                 spend = (time.time() - start) / 60
-                logging.info("Valid loss: {:.3f}, acc: {:.3f}, time: {:.3f}(m)"
+                logging.info("Valid loss: {:.3f}, acc: {:.3f}, time: {:.1f}(m)"
                              .format(test_loss, test_acc, spend))
                 if best_valid_acc < test_acc:
                     best_valid_acc = test_acc
@@ -172,7 +173,7 @@ def train(args):
         test_loss, test_acc = evaluate(
             model, test_batch_loader, USE_CUDA)
         spend = (time.time() - start) / 60
-        logging.info("Test loss: {:.3f}, acc: {:.3f}, time: {:.3f}(m)"
+        logging.info("Test loss: {:.3f}, acc: {:.3f}, time: {:.1f}(m)"
                      .format(test_loss, test_acc, spend))
         if best_test_acc < test_acc:
             best_test_acc = test_acc

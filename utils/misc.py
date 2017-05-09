@@ -117,7 +117,8 @@ def evaluate(model, data, use_cuda):
         leave=False)
     for dw, dt, qw, qt, a, m_dw, m_qw, tt, \
             tm, c, m_c, cl, fnames in data:
-        n_examples += dw.shape[0]
+        bsize = dw.shape[0]
+        n_examples += bsize
         dw, dt, qw, qt, a, m_dw, m_qw, tt, \
             tm, c, m_c, cl = to_vars([dw, dt, qw, qt, a, m_dw, m_qw, tt,
                                      tm, c, m_c, cl],
@@ -130,7 +131,7 @@ def evaluate(model, data, use_cuda):
         loss += _loss
         acc += _acc
         tr.set_description("loss: {:.3f}, acc: {:.3f}".
-                           format(_loss, _acc / dw.shape[0]))
+                           format(_loss, _acc / bsize))
         tr.update()
     tr.close()
     return loss / len(data), acc / n_examples

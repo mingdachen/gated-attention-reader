@@ -82,7 +82,7 @@ class GAReader(nn.Module):
             hidden_size=self.gru_size,
             batch_first=True,
             bidirectional=True)
-        self.criterion = nn.CrossEntropyLoss()
+        # self.criterion = nn.NLLLoss()
 
     def forward(self, doc, doc_char, qry, qry_char, target,
                 doc_mask, qry_mask, token, token_mask, cand,
@@ -129,9 +129,7 @@ class GAReader(nn.Module):
             qry_embed, qry_mask, self.final_qry_layer)
         pred = attention_sum(
             doc_final_embed, qry_final_embed, cand, cloze, cand_mask)
-        loss = self.criterion(pred, target.long())
+        loss = torch.mean(crossentropy(pred, target.long()))
         prob, pred_ans = torch.max(pred, dim=1)
-        # prob_ = prob.gather(1, target.view(-1, 1).long())
-        # print(prob_)
         acc = torch.sum(torch.eq(pred_ans, target.long()))
         return loss, acc

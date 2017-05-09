@@ -8,15 +8,19 @@ import torch
 import torch.nn.functional as F
 
 
-def torchconcat(t1, t2):
-    return torch.concat([t1, t2], axis=2)
+def tcat(t1, t2):
+    return torch.cat([t1, t2], axis=2)
 
 
-def torchsum(t1, t2):
+def tsum(t1, t2):
     return t1 + t2
 
 
-def gated_attention(doc, qry, inter, mask, gating_fn='torch.mul'):
+def tmul(t1, t2):
+    return torch.mul(t1, t2)
+
+
+def gated_attention(doc, qry, inter, mask, gating_fn='tmul'):
     # doc: B x N x D
     # qry: B x Q x D
     # inter: B x N x Q
@@ -45,7 +49,7 @@ def attention_sum(doc, qry, cand, cloze, cand_mask):
     cloze_idx = cloze\
         .view(-1, 1).expand(
             qry.size(0), qry.size(2)).unsqueeze(1)
-    q = qry.gather(1, cloze_idx.long()).squeeze()  # B x D
+    q = qry.gather(1, cloze_idx.long()).squeeze(1)  # B x D
     p = torch.squeeze(
         torch.bmm(doc, q.unsqueeze(dim=-1)), dim=-1)  # B x N
     pm = F.softmax(p) * cand_mask.float()  # B x N
@@ -78,3 +82,13 @@ def gru(inputs, mask, cell):
         .view(-1, 1, 1).expand_as(unpacked)
     output_seq = unpacked.gather(0, unsorted_idx.long())
     return output_seq, seq_lengths
+
+
+def crossentropy(pred, target):
+    """
+    pred: B x C
+    target: B x 1
+    """
+    idx = target.unsqueeze(1)
+    logit = pred.gather(1, idx)
+    return - torch.log(logit)

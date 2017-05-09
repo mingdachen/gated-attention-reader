@@ -9,10 +9,9 @@ import glob
 import os
 import logging
 from collections import Counter
-from queue import Queue
 from tqdm import tqdm
 import numpy as np
-from multiprocessing.dummy import Pool, Manager
+from multiprocessing.dummy import Pool
 from functools import partial
 try:
     env_threads = int(os.environ['OMP_NUM_THREADS'])
@@ -118,15 +117,14 @@ class data_preprocessor:
                 e for e in vocab_set if e.startswith('@entity'))
             if vocab_size is None:
                 vocab_size = len(word_count)
-            vocab_size_ = vocab_size + len(list(entities)) + 3
-            ls = word_count.most_common(vocab_size_)
+            ls = word_count.most_common(vocab_size)
             # @placehoder, @begin and @end are included in the vocabulary list
-            tokens = list(set([x[0] for x in ls]).difference(entities))
-            tokens.append(SYMB_BEGIN)
-            tokens.append(SYMB_END)
-            tokens.insert(0, UNK)
+            tokens = set([x[0] for x in ls]).difference(entities)
+            tokens.add(SYMB_BEGIN)
+            tokens.add(SYMB_END)
 
-            vocabularies = tokens + list(entities)
+            vocabularies = list(entities) + list(tokens)
+            vocabularies.insert(0, UNK)
             logging.info('#Words: %d -> %d' %
                          (len(word_count), len(vocabularies)))
             for key in vocabularies[:5]:
@@ -137,28 +135,29 @@ class data_preprocessor:
             logging.info("writing vocabularies to " + vocab_file + " ...")
             with open(vocab_file, "w", encoding='utf-8') as vocab_fp:
                 vocab_fp.write('\n'.join(vocabularies))
-        vocab_size_ = len(vocabularies)
+        vocab_size = len(vocabularies)
         # word dictionary: word -> index
-        word_dictionary = dict(zip(vocabularies, range(vocab_size_)))
+        word_dictionary = dict(zip(vocabularies, range(vocab_size)))
         char_set = set([c for w in vocabularies for c in list(w)])
         char_set.add(' ')
         # char dictionary: char -> index
         char_dictionary = dict(zip(list(char_set), range(len(char_set))))
         num_entities = len(
             [v for v in vocabularies if v.startswith('@entity')])
-        logging.info("vocab_size = %d" % vocab_size_)
+        logging.info("vocab_size = %d" % vocab_size)
         logging.info("num characters = %d" % len(char_set))
         logging.info("%d anonymoused entities" % num_entities)
         logging.info("%d other tokens (including @placeholder, %s and %s)" % (
-                     vocab_size_ - num_entities, SYMB_BEGIN, SYMB_END))
+                     vocab_size - num_entities, SYMB_BEGIN, SYMB_END))
 
         return word_dictionary, char_dictionary, num_entities
 
-    def parse_one_file(self, fname, w_dict, c_dict, use_chars):
+    def parse_one_file(self, fname, dictionary, use_chars):
         """
         parse a *.question file into tuple(document, query, answer, filename)
         and convert them into indices
         """
+        w_dict, c_dict = dictionary[0], dictionary[1]
         with open(fname, encoding='utf-8') as fp:
             raw = fp.readlines()
         doc_raw = raw[2].split()  # document
@@ -207,22 +206,17 @@ class data_preprocessor:
         """
         all_files = glob.glob(directory + '/*.question')[: max_example]
         logging.info("Processing with {} threads ...".format(NUM_THREADS))
-        manager = Manager()
-        w_dict, c_dict = dictionary[0], dictionary[1]
-        w_dict_m = manager.dict(w_dict)
-        c_dict_m = manager.dict(c_dict)
         with Pool(NUM_THREADS) as pool:
-            questions = Queue()
+            questions = []
             for question in tqdm(
                 pool.imap_unordered(
                     partial(
                         self.parse_one_file,
-                        w_dict=w_dict_m,
-                        c_dict=c_dict_m,
+                        dictionary=dictionary,
                         use_chars=use_chars),
                     all_files), total=len(all_files)):
-                questions.put(question)
-        return list(questions.queue)
+                questions.append(question)
+        return questions
 
     def gen_text_for_word2vec(self, question_dir, text_file):
 
