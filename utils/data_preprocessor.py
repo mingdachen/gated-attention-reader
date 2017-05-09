@@ -8,8 +8,6 @@ from builtins import range
 import glob
 import os
 import logging
-import numpy as np
-from tqdm import tqdm
 from multiprocessing.dummy import Pool
 from functools import partial
 try:
